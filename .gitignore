@@ -1,0 +1,13 @@
+node_modules/
+.runtime/
+*.log
+.env
+.DS_Store
+.cache/
+
+# 内部开发记录，含本机路径
+docs/AGENT_HANDOFF.md
+docs/NEXT_AGENT_PROMPT.md
+# 可能含真实账号信息的截图
+docs/checkbox-error-20261029.png
+docs/monitor-dashboard.jpg

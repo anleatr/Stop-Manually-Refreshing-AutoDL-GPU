@@ -1,0 +1,5 @@
+
+> autodl-gpu-watch@0.1.0 test:images-ui
+> node scripts/images-ui-smoke.mjs
+
+官方镜像页面回归通过：四级分支、CUDA自动带入、清除旧报价、创建/克隆独立配置、失败/404/空/禁用/重名选项、迟到响应、会话失效、5种宽度，以及本地Element菜单读取和精确选择。全部为隔离数据，无真实租卡或外部调用。

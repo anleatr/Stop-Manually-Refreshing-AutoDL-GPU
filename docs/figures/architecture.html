@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>总体架构</title>
+<style>
+  body { margin: 0; background: #fff; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #243449; }
+  .wrap { width: 1360px; padding: 28px 32px; box-sizing: border-box; }
+  .zones { display: grid; grid-template-columns: 1fr 300px; gap: 22px; }
+  .zone { border: 2px dashed #b7c6d4; border-radius: 14px; padding: 16px 18px 18px; }
+  .zone-title { font-weight: 700; font-size: 17px; margin-bottom: 12px; color: #3b5268; }
+  .row { display: grid; grid-template-columns: 230px 34px 1fr 34px 200px; align-items: center; }
+  .arrow { text-align: center; font-size: 24px; color: #6b8197; }
+  .box { border: 1.5px solid #cbd7e2; border-radius: 10px; padding: 12px 14px; background: #f7fafc; font-size: 15px; font-weight: 650; line-height: 1.5; }
+  .box small { display: block; font-weight: 400; font-size: 12.5px; color: #5e6e80; margin-top: 4px; }
+  .box ul { margin: 6px 0 0; padding-left: 18px; font-weight: 400; font-size: 13px; color: #33475b; }
+  .svc { background: #fff; }
+  .mods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .mod { border-radius: 8px; padding: 8px 10px; font-size: 13.5px; font-weight: 650; background: #eef3f8; border: 1px solid #d8e2ea; }
+  .mod small { font-size: 12px; }
+  .ai { background: #e8f5f0; border-color: #b9dfcf; color: #155e52; }
+  .exec { background: #fff6e4; border-color: #ead6ae; }
+  .below { display: grid; grid-template-columns: 230px 34px 1fr 34px 200px; margin-top: 10px; }
+  .vert { text-align: center; font-size: 22px; color: #6b8197; }
+  .llm { background: #e8f5f0; border-color: #b9dfcf; }
+  .ext .box { margin-bottom: 10px; background: #fff; }
+  .ext .key { background: #fff6e4; border-color: #ead6ae; }
+  .legend { margin-top: 14px; font-size: 13px; color: #5e6e80; }
+  .legend span { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin: 0 4px 0 14px; }
+</style></head>
+<body><div class="wrap">
+  <div class="zones">
+    <div class="zone">
+      <div class="zone-title">使用者的电脑（不需要 GPU）</div>
+      <div class="row">
+        <div class="box">浏览器控制台<small>只连 127.0.0.1 · 本机令牌 · 同源检查</small>
+          <ul><li>新建 / 克隆任务表单</li><li>AI 环境与选卡</li><li>任务队列与运行日志</li><li>消息与通知设置</li></ul></div>
+        <div class="arrow">⇄</div>
+        <div class="box svc">本机服务（Node.js）
+          <div class="mods">
+            <div class="mod ai">环境与选卡规划<small>规则提取 · 引用核对 · 合并 · 型号求解 · 官方镜像选择</small></div>
+            <div class="mod ai">AI 接入（可选）<small>用户自己的 API Key · 只抽取约束、引用核对 · 失败不影响核心</small></div>
+            <div class="mod exec">任务引擎<small>提交边界落盘 · 点击后对账 · 结果不明停下 · 主机冷却</small></div>
+            <div class="mod exec">AutoDL 网页适配器<small>同步型号与镜像 · 选主机 · 核对报价 · 克隆只读源实例</small></div>
+            <div class="mod">状态存储 · 凭据<small>.runtime 本机保存 · DPAPI 加密记住的 Key/Token</small></div>
+            <div class="mod">通知 · 余额预检<small>站内、桌面、微信、Webhook · 开发者 Token</small></div>
+          </div></div>
+        <div class="arrow">⇄</div>
+        <div class="box">专用浏览器<small>Playwright 驱动 · 用户自己登录 AutoDL · 只操作可见页面</small></div>
+      </div>
+    </div>
+    <div class="zone ext">
+      <div class="zone-title">外部服务</div>
+      <div class="box key">AutoDL 网页<small>型号目录 · 官方镜像菜单 · 主机列表 · 创建并开机 · 克隆 · 实例列表</small></div>
+      <div class="box">AutoDL 开发者接口<small>余额（可选，用户自己的 Token）</small></div>
+      <div class="box llm">模型 API（可选）<small>DeepSeek / 百炼等 · 用户自己的 Key · 只发送用户确认的文字</small></div>
+      <div class="box">AutoDL 微信 / Webhook<small>通知（可选）</small></div>
+      <div class="box">开源项目资料<small>README · 依赖文件 · 报错（用户粘贴）</small></div>
+    </div>
+  </div>
+  <div class="legend">图例：<span style="background:#e8f5f0;border:1px solid #b9dfcf"></span>AI 与规划<span style="background:#fff6e4;border:1px solid #ead6ae"></span>付费操作相关<span style="background:#eef3f8;border:1px solid #d8e2ea"></span>其他</div>
+</div></body></html>

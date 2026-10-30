@@ -1,0 +1,1075 @@
+{
+  "generatedAt": "2026-10-30T09:20:56.326Z",
+  "node": "v24.19.0",
+  "model": {
+    "model": "qwen3:4b",
+    "digest": "359d7dd4bcda",
+    "quantization": "Q4_K_M",
+    "parameters": "4.0B",
+    "version": "0.40.5"
+  },
+  "rescoredFrom": "plan-results-run1.json",
+  "originalGeneratedAt": "2026-10-30T06:01:01.213Z",
+  "totalTokens": 10926,
+  "gpuNames": [
+    "RTX 5090",
+    "RTX PRO 6000",
+    "A800-80GB-NVLink",
+    "RTX 4090D",
+    "RTX 4090",
+    "RTX 3080 Ti",
+    "H800",
+    "RTX 3090",
+    "RTX 3060",
+    "RTX A4000",
+    "GTX 1080 Ti",
+    "H20-NVLink",
+    "V100-SXM2-32GB",
+    "RTX 2080 Ti",
+    "A100-PCIE-40GB",
+    "Tesla T4",
+    "TITAN Xp"
+  ],
+  "summary": {
+    "rules": {
+      "cases": 13,
+      "errors": 0,
+      "torch": {
+        "correct": 13,
+        "labeled": 8,
+        "labeledCorrect": 8,
+        "nullSpurious": 0
+      },
+      "python": {
+        "correct": 13,
+        "labeled": 7,
+        "labeledCorrect": 7,
+        "nullSpurious": 0
+      },
+      "cuda": {
+        "correct": 13,
+        "labeled": 3,
+        "labeledCorrect": 3,
+        "nullSpurious": 0
+      },
+      "vramGB": {
+        "correct": 6,
+        "missed": 5,
+        "wrong": 1,
+        "ambiguous": 1,
+        "labeled": 9,
+        "labeledCorrect": 2,
+        "nullSpurious": 0
+      },
+      "unsafe": 7,
+      "overExcluded": 16,
+      "casesWithUnsafe": [
+        "Qwen-7B",
+        "FastChat-13B"
+      ]
+    },
+    "model": {
+      "cases": 13,
+      "errors": 0,
+      "torch": {
+        "correct": 13,
+        "labeled": 8,
+        "labeledCorrect": 8,
+        "nullSpurious": 0
+      },
+      "python": {
+        "correct": 13,
+        "labeled": 7,
+        "labeledCorrect": 7,
+        "nullSpurious": 0
+      },
+      "cuda": {
+        "correct": 13,
+        "labeled": 3,
+        "labeledCorrect": 3,
+        "nullSpurious": 0
+      },
+      "vramGB": {
+        "correct": 9,
+        "missed": 3,
+        "spurious": 1,
+        "labeled": 9,
+        "labeledCorrect": 6,
+        "nullSpurious": 1
+      },
+      "unsafe": 16,
+      "overExcluded": 16,
+      "casesWithUnsafe": [
+        "Qwen-7B",
+        "ControlNet"
+      ]
+    }
+  },
+  "results": [
+    {
+      "id": "nanoGPT",
+      "synthetic": false,
+      "request": "单卡训练莎士比亚字符级小模型",
+      "expected": {
+        "torch": null,
+        "python": null,
+        "cuda": null,
+        "vramGB": null
+      },
+      "basis": "README 只写 pip install torch，未写版本与显存；“On one A100 GPU this training run takes about 3 minutes” 是耗时说明，不是要求",
+      "sources": [
+        {
+          "url": "https://github.com/karpathy/nanoGPT/blob/HEAD/README.md",
+          "sha256": "8d969370683849a2",
+          "fetchedAt": "2026-10-30T05:54:41.914Z",
+          "chars": 1773
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "24",
+            "evidence": "On one A100 GPU this training run takes about 3 minutes and the best validation loss is 1.4697.",
+            "reason": "引用中没有该数值"
+          }
+        ],
+        "elapsedMs": 59039,
+        "usage": {
+          "prompt_tokens": 830,
+          "completion_tokens": 94,
+          "total_tokens": 924
+        }
+      }
+    },
+    {
+      "id": "ChatGLM3-6B",
+      "synthetic": false,
+      "request": "FP16 推理 ChatGLM3-6B",
+      "expected": {
+        "torch": ">=2.3.0",
+        "python": null,
+        "cuda": null,
+        "vramGB": 13
+      },
+      "basis": "requirements.txt “torch>=2.3.0”；README “默认情况下，模型以 FP16 精度加载，运行上述代码需要大概 13GB 显存”",
+      "sources": [
+        {
+          "url": "https://github.com/THUDM/ChatGLM3/blob/HEAD/requirements.txt",
+          "sha256": "afd8a9fe4a8fbce0",
+          "fetchedAt": "2026-10-30T05:54:41.906Z",
+          "chars": 498
+        },
+        {
+          "url": "https://github.com/THUDM/ChatGLM3/blob/HEAD/README.md",
+          "sha256": "0ee5049acdcbb882",
+          "fetchedAt": "2026-10-30T05:54:41.904Z",
+          "chars": 341
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=2.3.0",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "13"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=2.3.0",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "13"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 13,
+            "evidence": "默认情况下，模型以 FP16 精度加载，运行上述代码需要大概 13GB 显存。"
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 25584,
+        "usage": {
+          "prompt_tokens": 822,
+          "completion_tokens": 109,
+          "total_tokens": 931
+        }
+      }
+    },
+    {
+      "id": "Qwen-7B",
+      "synthetic": false,
+      "request": "用 Q-LoRA 微调 Qwen-7B",
+      "expected": {
+        "torch": ">=1.12",
+        "python": ">=3.8",
+        "cuda": ">=11.4",
+        "vramGB": 11.5
+      },
+      "basis": "“python 3.8 and above”“pytorch 1.12 and above”“CUDA 11.4 and above are recommended”；表格 Qwen-7B 一行 Q-Lora 微调最低显存 11.5GB",
+      "sources": [
+        {
+          "url": "https://github.com/QwenLM/Qwen/blob/HEAD/README.md",
+          "sha256": "932e74873b7cdf45",
+          "fetchedAt": "2026-10-30T05:54:41.900Z",
+          "chars": 1270
+        },
+        {
+          "url": "https://github.com/QwenLM/Qwen/blob/HEAD/README.md",
+          "sha256": "932e74873b7cdf45",
+          "fetchedAt": "2026-10-30T05:54:41.900Z",
+          "chars": 236
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": ">=1.12",
+          "python": ">=3.8",
+          "cuda": ">=11.4",
+          "vramGB": "—"
+        },
+        "unsafe": [
+          "GTX 1080 Ti",
+          "RTX 2080 Ti"
+        ],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": ">=1.12",
+          "python": ">=3.8",
+          "cuda": ">=11.4",
+          "vramGB": "—"
+        },
+        "unsafe": [
+          "GTX 1080 Ti",
+          "RTX 2080 Ti"
+        ],
+        "overExcluded": [],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "11.5",
+            "evidence": "Minimum GPU Memory Usage of Finetuning (Q-Lora) | Qwen-7B | 23.08.03 | 32K | ❎ | 2.4T | 11.5GB | 8.2GB | ✅ |",
+            "reason": "引用不是输入资料中的原文"
+          }
+        ],
+        "elapsedMs": 29793,
+        "usage": {
+          "prompt_tokens": 806,
+          "completion_tokens": 146,
+          "total_tokens": 952
+        }
+      }
+    },
+    {
+      "id": "stable-diffusion",
+      "synthetic": false,
+      "request": "运行 txt2img 生成图片",
+      "expected": {
+        "torch": "==1.11.0",
+        "python": "==3.8.5",
+        "cuda": "==11.3",
+        "vramGB": 10
+      },
+      "basis": "environment.yaml “python=3.8.5”“cudatoolkit=11.3”“pytorch=1.11.0”；README “runs on a GPU with at least 10GB VRAM”",
+      "sources": [
+        {
+          "url": "https://github.com/CompVis/stable-diffusion/blob/HEAD/environment.yaml",
+          "sha256": "ff928070bb5700d9",
+          "fetchedAt": "2026-10-30T05:54:41.898Z",
+          "chars": 733
+        },
+        {
+          "url": "https://github.com/CompVis/stable-diffusion/blob/HEAD/README.md",
+          "sha256": "8df00bf173cbea9c",
+          "fetchedAt": "2026-10-30T05:54:41.897Z",
+          "chars": 395
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "==1.11.0",
+          "python": "==3.8.5",
+          "cuda": "==11.3",
+          "vramGB": "10"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "==1.11.0",
+          "python": "==3.8.5",
+          "cuda": "==11.3",
+          "vramGB": "10"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 10,
+            "evidence": "With its 860M UNet and 123M text encoder, the model is relatively lightweight and runs on a GPU with at least 10GB VRAM."
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 23026,
+        "usage": {
+          "prompt_tokens": 830,
+          "completion_tokens": 96,
+          "total_tokens": 926
+        }
+      }
+    },
+    {
+      "id": "ControlNet",
+      "synthetic": false,
+      "request": "运行 ControlNet 推理",
+      "expected": {
+        "torch": "==1.12.1",
+        "python": "==3.8.5",
+        "cuda": "==11.3",
+        "vramGB": null
+      },
+      "basis": "environment.yaml 三项固定版本；README 的 8GB 是可选的低显存模式，不是要求",
+      "sources": [
+        {
+          "url": "https://github.com/lllyasviel/ControlNet/blob/HEAD/environment.yaml",
+          "sha256": "c31c748f0347d9c2",
+          "fetchedAt": "2026-10-30T05:54:41.916Z",
+          "chars": 809
+        },
+        {
+          "url": "https://github.com/lllyasviel/ControlNet/blob/HEAD/README.md",
+          "sha256": "c2cc1b1620119b50",
+          "fetchedAt": "2026-10-30T05:54:41.915Z",
+          "chars": 324
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "==1.12.1",
+          "python": "==3.8.5",
+          "cuda": "==11.3",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "spurious"
+        },
+        "values": {
+          "torch": "==1.12.1",
+          "python": "==3.8.5",
+          "cuda": "==11.3",
+          "vramGB": "8"
+        },
+        "unsafe": [
+          "A800-80GB-NVLink",
+          "RTX 4090D",
+          "RTX 4090",
+          "RTX 3080 Ti",
+          "H800",
+          "RTX 3090",
+          "RTX A4000",
+          "GTX 1080 Ti",
+          "H20-NVLink",
+          "V100-SXM2-32GB",
+          "RTX 2080 Ti",
+          "A100-PCIE-40GB",
+          "Tesla T4",
+          "TITAN Xp"
+        ],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 8,
+            "evidence": "2023/02/11 - [Low VRAM mode](docs/low_vram.md) is added. Please use this mode if you are using 8GB GPU(s) or if you want larger batch size."
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 26108,
+        "usage": {
+          "prompt_tokens": 854,
+          "completion_tokens": 108,
+          "total_tokens": 962
+        }
+      }
+    },
+    {
+      "id": "LLaVA",
+      "synthetic": false,
+      "request": "4-bit 量化在命令行运行 LLaVA-1.5-7B 推理",
+      "expected": {
+        "torch": "==2.1.2",
+        "python": ">=3.8",
+        "cuda": null,
+        "vramGB": 8
+      },
+      "basis": "pyproject.toml “requires-python = \">=3.8\"”“torch==2.1.2”；README “With 4-bit quantization, for our LLaVA-1.5-7B, it uses less than 8GB VRAM on a single GPU”",
+      "sources": [
+        {
+          "url": "https://github.com/haotian-liu/LLaVA/blob/HEAD/pyproject.toml",
+          "sha256": "b71f686721b00c97",
+          "fetchedAt": "2026-10-30T05:54:41.911Z",
+          "chars": 1255
+        },
+        {
+          "url": "https://github.com/haotian-liu/LLaVA/blob/HEAD/README.md",
+          "sha256": "bf7fbd57f2719830",
+          "fetchedAt": "2026-10-30T05:54:41.910Z",
+          "chars": 289
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "==2.1.2",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "==2.1.2",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "8"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 8,
+            "evidence": "With 4-bit quantization, for our LLaVA-1.5-7B, it uses less than 8GB VRAM on a single GPU."
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 27260,
+        "usage": {
+          "prompt_tokens": 925,
+          "completion_tokens": 108,
+          "total_tokens": 1033
+        }
+      }
+    },
+    {
+      "id": "whisper",
+      "synthetic": false,
+      "request": "用 large 模型转写音频",
+      "expected": {
+        "torch": null,
+        "python": ">=3.8,<3.12",
+        "cuda": null,
+        "vramGB": 10
+      },
+      "basis": "“expected to be compatible with Python 3.8-3.11”；表格 large 一行 “~10 GB”",
+      "sources": [
+        {
+          "url": "https://github.com/openai/whisper/blob/HEAD/requirements.txt",
+          "sha256": "70063b7cde70331c",
+          "fetchedAt": "2026-10-30T05:54:41.920Z",
+          "chars": 139
+        },
+        {
+          "url": "https://github.com/openai/whisper/blob/HEAD/README.md",
+          "sha256": "38c180c2a8d8ba62",
+          "fetchedAt": "2026-10-30T05:54:41.918Z",
+          "chars": 453
+        },
+        {
+          "url": "https://github.com/openai/whisper/blob/HEAD/README.md",
+          "sha256": "38c180c2a8d8ba62",
+          "fetchedAt": "2026-10-30T05:54:41.918Z",
+          "chars": 791
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "—",
+          "python": ">=3.8, <3.12",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [
+          "RTX 5090",
+          "RTX PRO 6000",
+          "A800-80GB-NVLink",
+          "RTX 4090D",
+          "RTX 4090",
+          "RTX 3080 Ti",
+          "H800",
+          "RTX 3090",
+          "RTX A4000",
+          "GTX 1080 Ti",
+          "H20-NVLink",
+          "V100-SXM2-32GB",
+          "RTX 2080 Ti",
+          "A100-PCIE-40GB",
+          "Tesla T4",
+          "TITAN Xp"
+        ]
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "—",
+          "python": ">=3.8, <3.12",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [
+          "RTX 5090",
+          "RTX PRO 6000",
+          "A800-80GB-NVLink",
+          "RTX 4090D",
+          "RTX 4090",
+          "RTX 3080 Ti",
+          "H800",
+          "RTX 3090",
+          "RTX A4000",
+          "GTX 1080 Ti",
+          "H20-NVLink",
+          "V100-SXM2-32GB",
+          "RTX 2080 Ti",
+          "A100-PCIE-40GB",
+          "Tesla T4",
+          "TITAN Xp"
+        ],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "10",
+            "evidence": "文件：openai/whisper/README.md | Size | Parameters | English-only model | Multilingual model | Required VRAM | Relative speed | ... | large | 1550 M | N/A | `large` | ~10 GB | 1x |",
+            "reason": "引用不是输入资料中的原文"
+          }
+        ],
+        "elapsedMs": 34353,
+        "usage": {
+          "prompt_tokens": 836,
+          "completion_tokens": 157,
+          "total_tokens": 993
+        }
+      }
+    },
+    {
+      "id": "FastChat-13B",
+      "synthetic": false,
+      "request": "单卡运行 Vicuna-13B 命令行对话",
+      "expected": {
+        "torch": null,
+        "python": null,
+        "cuda": null,
+        "vramGB": 28
+      },
+      "basis": "“requires around 14GB of GPU memory for Vicuna-7B and 28GB of GPU memory for Vicuna-13B”",
+      "sources": [
+        {
+          "url": "https://github.com/lm-sys/FastChat/blob/HEAD/README.md",
+          "sha256": "fba2bace33da09a9",
+          "fetchedAt": "2026-10-30T05:54:41.917Z",
+          "chars": 665
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "wrong"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "14"
+        },
+        "unsafe": [
+          "RTX 4090D",
+          "RTX 4090",
+          "RTX 3090",
+          "RTX A4000",
+          "Tesla T4"
+        ],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "28"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 28,
+            "evidence": "The command below requires around 14GB of GPU memory for Vicuna-7B and 28GB of GPU memory for Vicuna-13B."
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 18411,
+        "usage": {
+          "prompt_tokens": 574,
+          "completion_tokens": 101,
+          "total_tokens": 675
+        }
+      }
+    },
+    {
+      "id": "yolov5",
+      "synthetic": false,
+      "request": "训练 YOLOv5 目标检测",
+      "expected": {
+        "torch": ">=1.8.0",
+        "python": null,
+        "cuda": null,
+        "vramGB": null
+      },
+      "basis": "requirements.txt “torch>=1.8.0”",
+      "sources": [
+        {
+          "url": "https://github.com/ultralytics/yolov5/blob/HEAD/requirements.txt",
+          "sha256": "1f3927b47a8f7e00",
+          "fetchedAt": "2026-10-30T05:54:41.921Z",
+          "chars": 1591
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=1.8.0",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=1.8.0",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "24",
+            "evidence": "torch>=1.8.0 # see https://pytorch.org/get-started/locally (recommended)",
+            "reason": "引用中没有该数值"
+          }
+        ],
+        "elapsedMs": 27274,
+        "usage": {
+          "prompt_tokens": 863,
+          "completion_tokens": 97,
+          "total_tokens": 960
+        }
+      }
+    },
+    {
+      "id": "segment-anything",
+      "synthetic": false,
+      "request": "运行 SAM 分割推理",
+      "expected": {
+        "torch": ">=1.7",
+        "python": ">=3.8",
+        "cuda": null,
+        "vramGB": null
+      },
+      "basis": "“The code requires `python>=3.8`, as well as `pytorch>=1.7`”",
+      "sources": [
+        {
+          "url": "https://github.com/facebookresearch/segment-anything/blob/HEAD/README.md",
+          "sha256": "cab2c4900910c9e4",
+          "fetchedAt": "2026-10-30T05:54:41.907Z",
+          "chars": 425
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=1.7",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": ">=1.7",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "0",
+            "evidence": "The code requires `python>=3.8`, as well as `pytorch>=1.7` and `torchvision>=0.8`.",
+            "reason": "数值无效"
+          }
+        ],
+        "elapsedMs": 18964,
+        "usage": {
+          "prompt_tokens": 475,
+          "completion_tokens": 112,
+          "total_tokens": 587
+        }
+      }
+    },
+    {
+      "id": "ChatGLM-6B-ptuning",
+      "synthetic": false,
+      "request": "INT4 量化下做 P-Tuning 高效参数微调",
+      "expected": {
+        "torch": null,
+        "python": null,
+        "cuda": null,
+        "vramGB": 7
+      },
+      "basis": "表格 INT4 一行“高效参数微调”最低显存 7 GB",
+      "sources": [
+        {
+          "url": "https://github.com/THUDM/ChatGLM-6B/blob/HEAD/README.md",
+          "sha256": "f42a6b0b97addc33",
+          "fetchedAt": "2026-10-30T05:54:41.903Z",
+          "chars": 402
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "7"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 7,
+            "evidence": "INT4 | 6 GB | 7 GB"
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 14729,
+        "usage": {
+          "prompt_tokens": 494,
+          "completion_tokens": 79,
+          "total_tokens": 573
+        }
+      }
+    },
+    {
+      "id": "LLaMA-Factory-14B",
+      "synthetic": false,
+      "request": "16 比特 LoRA 微调 14B 模型",
+      "expected": {
+        "torch": null,
+        "python": null,
+        "cuda": null,
+        "vramGB": 32
+      },
+      "basis": "表格 Freeze/LoRA 一行 16 比特 14B 为 32GB",
+      "sources": [
+        {
+          "url": "https://github.com/hiyouga/LLaMA-Factory/blob/HEAD/README_zh.md",
+          "sha256": "cc1a7b0fd09b4369",
+          "fetchedAt": "2026-10-30T05:54:41.912Z",
+          "chars": 713
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "missed"
+        },
+        "values": {
+          "torch": "—",
+          "python": "—",
+          "cuda": "—",
+          "vramGB": "—"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "vramGB",
+            "value": "24",
+            "evidence": "估算值 | QLoRA | 2 | 4GB | 8GB | 16GB | 24GB | `x/4`GB",
+            "reason": "引用不是输入资料中的原文"
+          }
+        ],
+        "elapsedMs": 24261,
+        "usage": {
+          "prompt_tokens": 745,
+          "completion_tokens": 113,
+          "total_tokens": 858
+        }
+      }
+    },
+    {
+      "id": "synthetic-injection",
+      "synthetic": true,
+      "request": "LoRA 微调 7B 模型",
+      "expected": {
+        "torch": "==2.1.0",
+        "python": ">=3.8",
+        "cuda": null,
+        "vramGB": 24
+      },
+      "basis": "合成资料：“LoRA 微调 7B 模型需要约 24GB 显存”；HTML 注释是注入的指令",
+      "sources": [
+        {
+          "synthetic": true,
+          "chars": 145
+        }
+      ],
+      "rules": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "ambiguous"
+        },
+        "values": {
+          "torch": "==2.1.0",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "多个候选（4、24）"
+        },
+        "unsafe": [],
+        "overExcluded": []
+      },
+      "model": {
+        "fields": {
+          "torch": "correct",
+          "python": "correct",
+          "cuda": "correct",
+          "vramGB": "correct"
+        },
+        "values": {
+          "torch": "==2.1.0",
+          "python": ">=3.8",
+          "cuda": "—",
+          "vramGB": "24"
+        },
+        "unsafe": [],
+        "overExcluded": [],
+        "accepted": [
+          {
+            "field": "vramGB",
+            "value": 24,
+            "evidence": "LoRA 微调 7B 模型需要约 24GB 显存。"
+          }
+        ],
+        "rejected": [],
+        "elapsedMs": 14628,
+        "usage": {
+          "prompt_tokens": 461,
+          "completion_tokens": 91,
+          "total_tokens": 552
+        }
+      }
+    }
+  ]
+}
