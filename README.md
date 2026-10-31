@@ -19,6 +19,7 @@
   <a href="#-快速开始">快速开始</a> ·
   <a href="#-使用步骤">使用步骤</a> ·
   <a href="#-ai-选卡">AI 选卡</a> ·
+  <a href="#-如何更新">如何更新</a> ·
   <a href="#-常见问题">常见问题</a> ·
   <a href="docs/USER_GUIDE.md">详细说明</a>
 </p>
@@ -39,8 +40,14 @@
 
 **需要**：Windows 10/11、[Node.js 22+](https://nodejs.org)、自己的 AutoDL 账号。本机不需要 GPU。
 
-1. 点仓库上方绿色的 **Code → Download ZIP** 并解压，或者 `git clone` 本仓库。
-2. 双击 **`启动监测台.cmd`**。第一次运行会自动安装依赖。
+1. 下载项目。推荐用 git，以后一条命令就能更新：
+
+   ```powershell
+   git clone https://github.com/cc2025cheng/Stop-Manually-Refreshing-AutoDL-GPU.git
+   ```
+
+   没装 git 也可以点仓库上方绿色的 **Code → Download ZIP** 并解压。
+2. 进入项目文件夹，双击 **`启动监测台.cmd`**。第一次运行会自动安装依赖。
 3. 浏览器打开 **http://127.0.0.1:8787** 。
 
 <details>
@@ -108,6 +115,19 @@ npm.cmd start
 - 👤 只在你本人登录的专用浏览器中操作可见页面，不调用私有接口，不代过验证码。
 - 🏠 服务只监听本机 127.0.0.1；任务、日志与登录资料保存在本机 `.runtime/`，不要分享这个目录，也不要把端口共享到局域网或公网。
 - 📜 本项目与 AutoDL 官方无隶属关系，使用前请对照 AutoDL 用户协议。详见 [docs/SECURITY.md](docs/SECURITY.md)。
+
+## 🔄 如何更新
+
+> [!IMPORTANT]
+> 更新前先暂停正在运行的监测任务，等提交或核验结束，再停止服务：在启动窗口按 Ctrl+C，或运行 `npm.cmd run stop`。
+
+| 下载方式 | 更新步骤 |
+| --- | --- |
+| `git clone` | 在项目文件夹运行 `git pull`，再运行 `npm.cmd install`（依赖有变化时需要），然后双击 `启动监测台.cmd` |
+| Download ZIP | 下载新的 ZIP 解压到新文件夹，把旧文件夹里的 `.runtime` 整个复制过去，再双击新文件夹里的 `启动监测台.cmd` |
+
+- 任务、设置和登录资料都在 `.runtime/`，不在仓库里，更新不会覆盖。
+- 想第一时间知道新版本：点仓库右上角 **Watch → Custom → 勾选 Releases → Apply**。每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md) 或 [Releases](https://github.com/cc2025cheng/Stop-Manually-Refreshing-AutoDL-GPU/releases)。
 
 ## ❓ 常见问题
 
