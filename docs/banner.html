@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>AutoDL 候机室</title>
+<!-- README 顶部横幅的源文件。渲染：node scripts/render-figure.mjs docs/banner.html docs/banner.png -->
+<style>
+  body { margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+  .wrap { width: 1360px; height: 360px; box-sizing: border-box; padding: 0 64px; position: relative; overflow: hidden; color: #fff;
+    display: grid; grid-template-columns: 1fr 500px; gap: 48px; align-items: center;
+    background: radial-gradient(rgba(255,255,255,.09) 1.5px, transparent 1.5px) 0 0 / 22px 22px, linear-gradient(118deg, #0d564d 0%, #147d70 48%, #23a08f 100%); }
+  .eyebrow { font-size: 15px; letter-spacing: 3.5px; font-weight: 700; color: #bfeee2; }
+  h1 { margin: 10px 0 8px; font-size: 68px; line-height: 1.1; font-weight: 800; letter-spacing: 1px; }
+  .sub { font-size: 25px; color: #eafaf5; }
+  .pills { display: flex; gap: 12px; margin-top: 26px; }
+  .pill { font-size: 17px; padding: 7px 16px; border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.28); }
+  .board { background: #0b1d27; border-radius: 16px; padding: 18px 22px 12px; box-shadow: 0 18px 40px rgba(0,0,0,.28); border: 1px solid #23414f; }
+  .board-head { display: flex; justify-content: space-between; font-size: 15px; color: #8fb4c4; letter-spacing: 2px; padding-bottom: 10px; border-bottom: 1px solid #23414f; }
+  .row { display: grid; grid-template-columns: 110px 1fr 120px; padding: 12px 0; border-bottom: 1px solid #16303c; font-size: 20px; align-items: center; }
+  .row:last-child { border-bottom: 0; }
+  .gpu { font-family: Consolas, monospace; font-weight: 700; color: #ffd46b; font-size: 22px; }
+  .region { color: #c9dde6; }
+  .st { justify-self: end; font-size: 17px; padding: 3px 12px; border-radius: 6px; font-weight: 700; }
+  .wait { color: #ffcf5a; background: rgba(255,207,90,.12); }
+  .go { color: #5fe3a4; background: rgba(95,227,164,.14); }
+</style></head>
+<body><div class="wrap">
+  <div>
+    <div class="eyebrow">STOP MANUALLY REFRESHING AUTODL GPU</div>
+    <h1>AutoDL 候机室</h1>
+    <div class="sub">设好条件并授权，空闲 GPU 一出现就自动开机</div>
+    <div class="pills"><span class="pill">⚡ 默认每秒检查</span><span class="pill">🔁 同地区克隆</span><span class="pill">🧠 AI 选卡</span><span class="pill">💻 本机无需 GPU</span></div>
+  </div>
+  <div class="board">
+    <div class="board-head"><span>GPU 航班</span><span>DEPARTURES</span></div>
+    <div class="row"><span class="region">北京B区</span><span class="gpu">RTX 4090</span><span class="st wait">候机中</span></div>
+    <div class="row"><span class="region">西北B区</span><span class="gpu">RTX 5090</span><span class="st wait">候机中</span></div>
+    <div class="row"><span class="region">重庆A区</span><span class="gpu">L20</span><span class="st go">已登机 ✓</span></div>
+  </div>
+</div></body></html>
