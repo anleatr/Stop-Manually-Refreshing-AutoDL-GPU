@@ -190,7 +190,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
     try {
       const host = assertLocalRequest(req);
       const url = new URL(req.url,`http://${host}`);
-      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:'0.2.0'});
+      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:'0.2.1'});
       if(url.pathname.startsWith('/api/')) {
         if(req.headers['x-local-token'] !== token) fail('TOKEN','本地访问令牌无效，请重新加载页面',{status:403});
         if(req.method === 'GET' && url.pathname === '/api/state') return json(res,200,{...store.publicState(),
