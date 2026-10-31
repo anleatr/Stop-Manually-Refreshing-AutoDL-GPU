@@ -1,5 +1,22 @@
 import { redact } from './errors.mjs';
 const CHANNELS = ['webhook', 'wechat'];
+// 只读取有限长度的回执正文；超过上限、不是 JSON 或读取中断时按空回执处理（状态码已表示成功）。
+async function receipt(response, limit = 16384) {
+  const object = value => value && typeof value === 'object' ? value : {};
+  const reader = response.body?.getReader?.();
+  if (!reader) return object(await response.json().catch(() => ({})));
+  const chunks = []; let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) { await reader.cancel().catch(() => {}); return {}; }
+      chunks.push(value);
+    }
+  } catch { return {}; } finally { reader.releaseLock?.(); }
+  try { return object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return {}; }
+}
 export class Notifier {
   constructor(store, { fetchImpl = fetch, clock = () => Date.now() } = {}) {
     this.store = store; this.fetch = fetchImpl; this.clock = clock; this.busy = false; this.stopping = false;
@@ -50,7 +67,7 @@ export class Notifier {
               body: JSON.stringify({ title: 'AutoDL GPU 监测', name: n.name.slice(0,40), content: n.message.slice(0,200) }),
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const body = await response.json().catch(() => ({}));
+            const body = await receipt(response);
             if (body.success === false || (body.code != null && ![0,200,'0','200','Success'].includes(body.code)))
               throw new Error('通知服务返回失败，请检查 Token、绑定与消息配额');
             Object.assign(delivery, { ok: true, at: this.clock(), pending: false });

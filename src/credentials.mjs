@@ -2,16 +2,18 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { AppError, fail } from './errors.mjs';
 const secretPaths = [['aiSettings','apiKey'],['walletSettings','token'],['settings','webhookUrl'],['settings','webhookToken'],['settings','wechatToken']];
-// 凭据只经标准输入传给系统保护 API，不放入命令行、环境变量或错误信息。
-const dpapiScript = "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $r=[Console]::In.ReadToEnd() | ConvertFrom-Json; $b=[Convert]::FromBase64String($r.data); if($r.action -eq 'protect'){$out=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)}else{$out=[Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)}; [Console]::Out.Write([Convert]::ToBase64String($out))";
+// 凭据只经标准输入传给系统保护 API，不放入命令行、环境变量或错误信息。标准输入只有 Base64，由 .NET 直接读取：
+// 不经过 ConvertFrom-Json 等 cmdlet，开启 PowerShell 模块日志时日志里也不会出现凭据。操作名只取固定的两个值。
+const dpapiScript = action => "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $b=[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); $out=[Security.Cryptography.ProtectedData]::"
+  + (action === 'protect' ? 'Protect' : 'Unprotect') + "($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($out))";
 export function systemSecretProtector({ platform = process.platform, run = execFileSync } = {}) {
   const available = platform === 'win32';
   function transform(action, value) {
     if (!available) fail('CREDENTIALS_UNAVAILABLE','此系统尚未提供安全凭据存储，请取消记住凭据，仅在本次服务中使用');
     try {
       const executable = path.join(process.env.SystemRoot || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
-      const result = run(executable,['-NoProfile','-NonInteractive','-Command',dpapiScript],{
-        input:JSON.stringify({action,data:Buffer.from(value).toString('base64')}), encoding:'utf8',
+      const result = run(executable,['-NoProfile','-NonInteractive','-Command',dpapiScript(action)],{
+        input:Buffer.from(value).toString('base64'), encoding:'utf8',
         windowsHide:true, timeout:15000, maxBuffer:1024*1024, stdio:['pipe','pipe','pipe'],
       }).trim();
       if (!result || !/^[A-Za-z0-9+/]+={0,2}$/.test(result)) throw Error('invalid protection result');

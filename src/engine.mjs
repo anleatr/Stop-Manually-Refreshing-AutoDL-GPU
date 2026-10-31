@@ -20,7 +20,27 @@ export class Engine {
   constructor(store, adapters, notifier, { clock = () => Date.now(), random = Math.random, wallet = null } = {}) {
     this.wallet = wallet; this.store = store; this.adapters = adapters; this.notifier = notifier; this.clock = clock; this.random = random;
     this.busy = false; this.timer = null; this.stopping = false;
+    // 适配器对账时排除别的任务已绑定的实例，避免把别的任务新建的实例当成本任务的。
+    for (const adapter of Object.values(adapters || {})) if (adapter && typeof adapter === 'object') adapter.claimedIds = t => this.claimedIds(t);
     this.recover();
+  }
+  claimedIds(t) {
+    return new Set(this.store.tasks().filter(o => o.id !== t.id).map(o => o.operation?.receipt?.instanceId).filter(Boolean));
+  }
+  // 另一个任务（同型号、同卡数、地区有重叠）有尚未绑定实例的提交时，本任务不提交：两边同时等结果时分不清新实例属于谁。
+  pendingOverlap(t) {
+    return this.store.tasks().find(o => o.id !== t.id && o.config.provider === 'autodl' && o.operation && !o.operation.receipt?.instanceId
+      && gpuKey(o.config.gpuModel) === gpuKey(t.config.gpuModel) && o.config.gpuCount === t.config.gpuCount
+      && o.config.regions.some(r => t.config.regions.includes(r))) || null;
+  }
+  // 此前有被拒绝或确认未创建的点击之后，另一台主机出现了与任务相符的新实例：可能多租了一台，提醒一次。
+  notePossibleDuplicates(t, ids) {
+    const fresh = (Array.isArray(ids) ? ids : []).filter(id => !(t.duplicateSuspectIds || []).includes(id));
+    if (!fresh.length) return;
+    this.store.patch(t, { duplicateSuspectIds: [...(t.duplicateSuspectIds || []), ...fresh].slice(-10) });
+    const message = '此前有一次点击被平台拒绝或确认未创建，之后实例列表又出现了与本任务相符的新实例 ' + fresh.slice(0, 3).join('、')
+      + '，可能是平台延迟创建，等于多租了一台。请到 AutoDL 核对，不需要的实例请自行释放（本程序不会释放实例）';
+    this.store.log(t, 'warn', message); this.alert(t, 'possible-duplicate', message);
   }
   recover() {
     for (const t of this.store.tasks()) {
@@ -144,6 +164,11 @@ export class Engine {
       // 记录命中的候选，之后核验失败时日志能看出失败发生在配置报价阶段。
       this.store.log(t, 'info', `${summary || '找到合格候选'}。候选：${host.region} ${host.number ? host.number + ' ' : ''}${host.gpuModel}，空闲 ${host.available}${host.total ? '/' + host.total : ''}，单卡 ¥${host.price}/时；${short ? (t.balanceLow?.kind === 'token' ? '没有连接余额 Token，未核验和提交' : '余额不足，未核验和提交，请先充值') : '开始核验配置与完整报价'}`);
       if (short) { this.schedule(t, { from: roundStart }); return; }
+      const overlap = t.config.action === 'execute' ? this.pendingOverlap(t) : null;
+      if (overlap) {
+        this.store.log(t, 'warn', '任务“' + (overlap.config.name || overlap.id) + '”（同型号、同卡数）的提交还在等待核对结果；本任务暂不提交，避免分不清新实例属于哪个任务。请先处理那个任务');
+        this.schedule(t, { from: roundStart }); return;
+      }
       const guarded = t.config.action === 'execute' && t.config.balanceGuard && typeof this.wallet?.refresh === 'function';
       // 余额与表单准备并行刷新，点击前只需确认结果足够新。
       if (guarded) void this.wallet.refresh({ force: true }).catch(() => {});
@@ -180,6 +205,7 @@ export class Engine {
       }, freshQuote => checkBalance(freshQuote, BALANCE_CLICK_MAX_AGE));
       if (t.operation?.stage !== 'click_started') throw new AppError('ADAPTER_MARK', '适配器未确认持久化提交边界，已停止');
       this.store.patch(t, { operation: { ...t.operation, stage: 'accepted', receipt }, state: stopped(t) ? t.state : 'verifying', unclearStreak: 0 });
+      this.notePossibleDuplicates(t, receipt?.lateIds);
       this.alert(t, 'submitted', `创建请求已提交${receipt.instanceId ? `，目标实例 ${receipt.instanceId}` : ''}；正在验证 GPU 运行${t.config.mode === 'clone' && t.config.copyDataDisk !== false ? '及数据盘复制。请勿在复制完成前写入目标数据盘' : t.config.mode === 'clone' ? '；本次未复制数据盘' : ''}`);
       this.store.log(t, 'info', `提交已返回（本轮开始到点击 ${((clickedAt - roundStart) / 1000).toFixed(1)} 秒），正在核对目标实例与数据盘进度`);
       this.schedule(t);
@@ -221,7 +247,7 @@ export class Engine {
         if (unclear && !stopped(t) && !session && failures < 3) {
           // 点击结果不明：保留提交记录，约2分钟后自动读取完整实例列表核对，不再次创建，也不需要手动点“重新核对”。
           const progress = phase === 'check' ? '自动核对实例列表未完成，30 秒后再试；不会再次创建' : '点击结果暂不明确，约 2 分钟后自动核对实例列表；不会再次创建';
-          this.store.patch(t, { state: 'verifying', lastError: null, lastProgress: progress, operation: { ...op, recheckFailures: failures },
+          this.store.patch(t, { state: 'verifying', lastError: null, lastProgress: progress, operation: { ...op, recheckFailures: failures, ...(error.noAutoBind ? { noAutoBind: true } : {}) },
             nextCheckAt: phase === 'check' ? this.clock() + 30000 : clickTime(op) + RECHECK_MIN_AGE });
           this.store.log(t, 'warn', `${phase === 'check' ? '自动核对实例列表未完成' : '点击后结果暂不明确' + clickNote}：${redact(messageOf(error))}。${progress}`);
         } else {
@@ -268,6 +294,7 @@ export class Engine {
     const status = await adapter.reconcile(t);
     if (stopped(t)) return;
     this.store.patch(t, { lastError: null, errors: 0 });
+    this.notePossibleDuplicates(t, status.lateIds);
     // 点击结果不明的提交经自动核对确认未创建：清除记录，立即继续监测；连续出现时提醒一次，不停止任务。
     if (status.notCreated && t.operation.stage === 'click_started' && !t.operation.receipt?.instanceId) {
       const op = t.operation, streak = (t.unclearStreak || 0) + 1;

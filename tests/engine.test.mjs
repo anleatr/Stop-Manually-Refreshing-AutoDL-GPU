@@ -326,3 +326,13 @@ test('仅监测任务和关闭余额保护的任务不做余额预检',async t=>
  const observe=fixture(t,{action:'observe',balanceGuard:true});const w=lowWallet(observe,0);await observe.engine.tick();assert.equal(w.calls.length,0);assert.equal(observe.task.state,'found');
  const off=fixture(t,{balanceGuard:false});const w2=lowWallet(off,0);await off.engine.tick();assert.equal(w2.calls.length,0);assert.equal(off.submissions,1);
 });
+test('对账返回可能多租的实例时提醒一次；另一个同型号任务的提交还没绑定实例时，本任务不提交',async t=>{
+  const f=fixture(t,{mode:'clone'});await f.engine.tick();assert.equal(f.task.state,'verifying');
+  const reconcile=f.adapter.reconcile.bind(f.adapter);f.adapter.reconcile=async task=>({...(await reconcile(task)),lateIds:['synthetic-late01']});
+  await f.due(40000);await f.due(30000);assert.equal(f.task.state,'completed');
+  assert.equal(f.store.data.notifications.filter(n=>n.event==='possible-duplicate').length,1);assert.deepEqual(f.task.duplicateSuspectIds,['synthetic-late01']);
+  const other={id:'synthetic-other-task',config:{...f.task.config,name:'另一任务'},operation:{stage:'click_started',at:f.clock()}};
+  assert.equal(f.engine.pendingOverlap({...f.task,id:'synthetic-third'}),null);
+  f.store.data.tasks.push(other);assert.equal(f.engine.pendingOverlap({...f.task,id:'synthetic-third'})?.id,'synthetic-other-task');
+  assert.equal(f.engine.pendingOverlap({...f.task,id:'synthetic-third',config:{...f.task.config,gpuCount:2}}),null);
+});

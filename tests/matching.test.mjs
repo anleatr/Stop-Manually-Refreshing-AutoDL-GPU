@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { normalizeConfig, normalizeNotifications } from '../src/config.mjs';
 import { cudaCompatible, gpuKey, selectCandidate, candidateReasons, verifyQuote, assessInstance, archCudaProblem } from '../src/matching.mjs';
 const config = overrides=>testConfig({action:'execute',paidConsent:true,...overrides});
-const host = overrides=>({id:'synthetic-host',region:'北京B区',gpuModel:'RTX 4090',available:2,driver:'550.1',maxCuda:'12.8',price:1.98,expandableGB:300,...overrides});
+const host = overrides=>({id:'synthetic-host',number:'合成主机',region:'北京B区',gpuModel:'RTX 4090',available:2,driver:'550.1',maxCuda:'12.8',price:1.98,expandableGB:300,...overrides});
 test('CUDA 按版本元组而不是小数比较；拒绝99占位数据',()=>{
   assert.equal(cudaCompatible('12.10','12.9'),true);assert.equal(cudaCompatible('12.8','12.10'),false);
   assert.equal(cudaCompatible('13.0','12.8'),true);assert.equal(cudaCompatible('99','12.1'),false);
@@ -69,6 +69,8 @@ test('克隆通过源主机号排除原机器；目标 GPU 型号和数量可以
   assert.deepEqual(candidateReasons(host({available:2}),config({mode:'clone',gpuCount:2}),source),[]);
   assert.deepEqual(candidateReasons(host({gpuModel:'RTX 3090'}),config({mode:'clone',gpuModel:'RTX 3090'}),source),[]);
   assert.ok(candidateReasons(host({region:'西北B区'}),config({mode:'clone'}),source).includes('不在源地区'));
+  // 读不出主机号时无法确认不是源主机，不选
+  assert.ok(candidateReasons(host({number:''}),config({mode:'clone'}),source).includes('主机号未知，无法确认不是源主机'));
 });
 test('克隆按源实例镜像的 CUDA 筛选宿主驱动，不使用任务里填写的 CUDA',()=>{
   const c=config({mode:'clone'});assert.equal(c.cuda,'');
@@ -101,4 +103,26 @@ test('真实新建镜像必须四级完整路径且CUDA一致',()=>{
   const c={gpuModel:'RTX 4090',provider:'autodl',action:'observe',maxGpuHourly:3,maxTotalHourly:4,maxStorageDaily:5};
   assert.throws(()=>normalizeConfig({...c,imagePath:['PyTorch','12.1']}),/四级完整/);
   assert.throws(()=>normalizeConfig({...c,imagePath:['PyTorch','2.1.0','3.10(ubuntu22.04)','12.8']}),/CUDA.*一致/);
+});
+test('页面解析：实例行的全部 ID 片段、复制中优先于“复制完成后”、主机号与可扩容容量的多种写法；不需要扩容时不看容量；数字只接受数字或十进制字符串',async()=>{
+  const { parseInstanceRow, parseHostRow } = await import('../src/adapters/dom.mjs');
+  const row=parseInstanceRow('stablediffusion-webui1\nabcd1234-ef5678\n北京B区 / 922机\nRTX 4090 × 1\n运行中\n数据盘复制中 数据盘复制完成后才能写入');
+  assert.deepEqual(row.ids,['stablediffusion-webui1','abcd1234-ef5678']);assert.equal(row.copyComplete,false);assert.equal(row.progress,'数据盘复制中');assert.equal(row.hostNumber,'922机');
+  assert.equal(parseInstanceRow('abcd1234-ef5678\n数据盘复制完成').copyComplete,true);
+  assert.equal(parseInstanceRow('abcd1234-ef5678\n4090机器测试').hostNumber,'');
+  const hostRow=cells=>parseHostRow({id:'h1',cells},'北京B区');
+  assert.equal(hostRow(['北京B区 922机','RTX 4090','1/8','可扩容：1.5TB']).number,'922机');
+  assert.equal(hostRow(['922机','可扩容：1.5TB']).expandableGB,1536);assert.equal(hostRow(['922机','可扩容：1,024GB']).expandableGB,1024);
+  assert.deepEqual(candidateReasons(host({expandableGB:null}),config({})),[]);
+  assert.ok(candidateReasons(host({expandableGB:null}),config({extraDiskGB:50})).includes('数据盘容量不足'));
+  for (const bad of [true,[5],'0x10','1e3']) assert.throws(()=>config({gpuCount:bad}),/GPU|数量|卡/);
+  assert.equal(config({gpuCount:'2'}).gpuCount,2);
+  const { assessInstance } = await import('../src/matching.mjs');
+  assert.equal(assessInstance({running:true,gpuVerified:true,copyComplete:true,progress:'数据盘复制中'},'clone',true).state,'verifying');
+});
+test('Webhook 地址换到另一个网站时不沿用原 Token；同一网站换路径可以沿用',()=>{
+  const stored={webhookUrl:'https://a.example.test/notify',webhookToken:'synthetic-token-a'};
+  assert.throws(()=>normalizeNotifications({webhookEnabled:true,webhookUrl:'https://b.example.test/notify',webhookToken:'***'},stored),/重新填写 Webhook Token/);
+  assert.equal(normalizeNotifications({webhookEnabled:true,webhookUrl:'https://a.example.test/other',webhookToken:'***'},stored).webhookToken,'synthetic-token-a');
+  assert.equal(normalizeNotifications({webhookEnabled:true,webhookUrl:'https://b.example.test/notify',webhookToken:''},stored).webhookToken,'');
 });

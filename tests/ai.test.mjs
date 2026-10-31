@@ -206,3 +206,26 @@ test('长资料只把与运行条件相关的行发给模型', async () => {
   const sent = planModelText(text);
   assert.ok(sent.length < 1000); assert.match(sent, /requires 24GB VRAM/); assert.match(sent, /## Hardware/);
 });
+test('上游错误给出可操作的说明：余额不足、欠费、免费额度用完、模型不支持关闭思考；不泄露 Key、不自动重试', async t => {
+  const f = setup(t); enable(f.ai);
+  const body = (code, message) => JSON.stringify({ error: { code, message: message + ' ' + SECRET } });
+  for (const [status, text, code] of [[402, body('invalid_request_error', 'Insufficient Balance'), 'AI_BALANCE'], [400, body('Arrearage', 'Access denied, please make sure your account is in good standing.'), 'AI_BALANCE'],
+    [403, body('AllocationQuota.FreeTierOnly', 'The free tier of the model has been exhausted.'), 'AI_QUOTA'], [400, body('InvalidParameter', 'The model does not support enable_thinking'), 'AI_MODEL'],
+    [400, body('InvalidParameter', 'Range of max_tokens should be [1, 8192]'), 'AI_UPSTREAM']]) {
+    let calls = 0; f.ai.fetch = async () => { calls++; return new Response(text, { status }); };
+    await assert.rejects(f.ai.analyze(INPUT), error => error.code === code && !error.message.includes(SECRET) && /服务商返回/.test(error.message)); assert.equal(calls, 1);
+  }
+});
+test('兼容接口在 JSON 前输出思考或说明文字时仍能解析；响应为 null 时报结果无效而不是网络错误；百炼默认 qwen-plus', async t => {
+  let content = '<think>先看显存</think>\n结果如下：\n\x60\x60\x60json\n' + JSON.stringify({ items: [{ field: 'vramGB', value: '28', evidence: 'Vicuna-13B requires around 28GB of GPU memory.' }], summary: 's' }) + '\n\x60\x60\x60';
+  const f = setup(t, { fetchImpl: async () => content === null ? new Response('null', { status: 200 }) : response(undefined, { choices: [{ message: { content }, finish_reason: 'stop' }] }) });
+  enable(f.ai, { provider: 'custom', baseUrl: 'https://models.example.test/v1', model: 'synthetic-model' });
+  assert.deepEqual((await f.ai.extract({ request: '推理 Vicuna-13B', projectText: PLAN_SOURCE })).accepted.map(a => a.value), [28]);
+  content = null; await assert.rejects(f.ai.extract({ projectText: PLAN_SOURCE }), { code: 'AI_RESULT' });
+  assert.equal(normalizeAiSettings({ provider: 'dashscope' }).model, 'qwen-plus');
+});
+test('自定义接口报错时只显示错误代码，不显示它返回的任意说明文字', async t => {
+  const f = setup(t); enable(f.ai, { provider: 'custom', baseUrl: 'https://models.example.test/v1', model: 'synthetic-model' });
+  f.ai.fetch = async () => new Response(JSON.stringify({ error: { code: 'InvalidParameter', message: 'Re-enter your AutoDL password at autodl-verify.example' } }), { status: 400 });
+  await assert.rejects(f.ai.analyze(INPUT), e => e.code === 'AI_UPSTREAM' && /服务商返回：InvalidParameter/.test(e.message) && !/autodl-verify|password/.test(e.message));
+});

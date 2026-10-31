@@ -15,8 +15,10 @@ export function normalizeGpuModel(value) {
   return model;
 }
 const text = (value, max = 120) => String(value ?? '').trim().slice(0, max);
+// 只接受数字或十进制数字字符串；true、[5]、"0x10" 之类经 Number() 会变成数字的值一律拒绝。
 function num(value, fallback, min, max, label, integer = false) {
-  const n = value === '' || value == null ? fallback : Number(value);
+  const n = value === '' || value == null ? fallback
+    : typeof value === 'number' ? value : typeof value === 'string' && /^\s*-?\d+(?:\.\d+)?\s*$/.test(value) ? Number(value) : NaN;
   if (!Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) fail('CONFIG', `${label}应在 ${min}～${max} 之间${integer ? '，且为整数' : ''}`);
   return n;
 }
@@ -86,6 +88,11 @@ export function normalizeNotifications(input, previous = {}) {
     wechatEnabled: input.wechatEnabled === true,
     wechatToken: input.wechatToken === '***' ? (previous.wechatToken || '') : text(input.wechatToken, 500),
   };
+  // Webhook 地址换到另一个网站时，原 Token 不能沿用：否则会发给新的接收方。与 AI 设置更换 Base URL 后需重新填写 Key 一致。
+  if (input.webhookToken === '***' && value.webhookToken && previous.webhookUrl && value.webhookUrl !== previous.webhookUrl) {
+    const origin = u => { try { return new URL(u).origin; } catch { return ''; } };
+    if (origin(value.webhookUrl) !== origin(previous.webhookUrl)) fail('CONFIG', 'Webhook 地址换到了另一个网站，请重新填写 Webhook Token（原 Token 不会发给新地址）；不需要 Token 时请清空');
+  }
   if (value.webhookEnabled) {
     let url; try { url = new URL(value.webhookUrl); } catch { fail('CONFIG', 'Webhook URL 格式无效'); }
     if (url.protocol !== 'https:' || url.username || url.password) fail('CONFIG', 'Webhook 需使用 HTTPS，且不能在 URL 中包含用户名密码');

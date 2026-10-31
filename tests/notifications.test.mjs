@@ -36,3 +36,8 @@ test('业务返回失败不能当发送成功，错误不回显URL或token',asyn
   const f=fixture(t);f.store.data.settings={webhookEnabled:true,webhookUrl:'https://isolated.example.test/notify'};queue(f);const notifier=new Notifier(f.store,{clock:f.clock,fetchImpl:async()=>({ok:true,json:async()=>({success:false})})});await notifier.flush();assert.equal(f.store.data.notifications[0].deliveries.webhook.ok,false);
   f.advance(15001);notifier.fetch=async()=>{throw Error('https://isolated.example.test/?token=synthetic token=synthetic-private');};await notifier.flush();assert.equal(f.store.data.notifications[0].deliveries.webhook.error.includes('synthetic'),false);
 });
+test('Webhook 回执只读取有限长度：超长回执不读进内存，按状态码记为已送达', async t => {
+  const f = fixture(t); f.store.data.settings = { webhookEnabled: true, webhookUrl: 'https://isolated.example.test/notify' }; queue(f);
+  const notifier = new Notifier(f.store, { clock: f.clock, fetchImpl: async () => new Response('x'.repeat(100000), { status: 200 }) });
+  await notifier.flush(); assert.equal(f.store.data.notifications[0].deliveries.webhook.ok, true);
+});

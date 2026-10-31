@@ -56,3 +56,11 @@ test('点击边界再次检查余额下降、凭证替换和清除',async()=>{
   let assets=10000;const w=fixture({fetchImpl:async()=>response(assets)});const check=await w.check(cfg());assets=3999;await w.refresh({force:true});assert.throws(()=>w.confirm(check),e=>e.code==='BALANCE_INSUFFICIENT');
   w.setToken('synthetic-other-token');assert.throws(()=>w.confirm(check),e=>e.code==='BALANCE_STALE');await w.refresh();w.clearToken();assert.throws(()=>w.confirm(check),e=>e.code==='BALANCE_STALE');
 });
+test('多卡预算不低于“单卡价 × 卡数”；租多卡时钱包余额（不含代金券）需大于 10 元', async () => {
+  const four = cfg({ gpuCount: 4, expectedHours: 1 });
+  assert.equal(estimateBudget(four, { hourly: 2.18, storageDaily: 0, host: { price: 2.18 } }).hourly, 8.72);
+  assert.equal(estimateBudget(four, { hourly: 9, storageDaily: 0, host: { price: 2.18 } }).hourly, 9);
+  const w = fixture({ fetchImpl: async () => response(5000, 100000) });
+  await assert.rejects(w.check(cfg({ gpuCount: 2, includeVouchers: true }), { hourly: 2, storageDaily: 0 }), e => e.code === 'BALANCE_INSUFFICIENT' && /大于 10 元/.test(e.message));
+  assert.equal((await w.check(cfg({ gpuCount: 1, includeVouchers: true }), { hourly: 1, storageDaily: 0 })).sufficient, true); w.close();
+});

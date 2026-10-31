@@ -148,17 +148,20 @@ test('报错但实例列表出现无法归属的新实例：不清除提交记�
  const extra=submission();extra.view.afterClick='toast';extra.view.instances=[{id:'synthetic-unexpected'}];
  await assert.rejects(extra.submit,e=>e.code==='SUBMIT_UNCLEAR'&&e.notCreated!==true&&/synthetic-unexpected/.test(e.message));
 });
-test('点击后出现未识别弹窗或页面没有任何结果：立即两次核对实例列表，没有新实例就清除记录继续，不等2分钟',async()=>{
+test('点击后出现未识别弹窗或页面没有任何结果：不立即判定未创建，保留提交记录，约2分钟后再核对实例列表',async()=>{
+ // 实例可能延迟出现在列表中：立即判定“未创建”会让下一轮再点一次而多租。
  const dialog=submission();dialog.view.afterClick='dialog';
- await assert.rejects(dialog.submit,e=>e.code==='SUBMIT_REJECTED'&&e.notCreated===true&&e.unrecognized===true&&e.race===true&&/弹窗/.test(e.message));
- assert.deepEqual(dialog.view.events,['mark','click','list','list']);
+ await assert.rejects(dialog.submit,e=>e.code==='SUBMIT_UNCLEAR'&&e.notCreated!==true&&/弹窗/.test(e.message));
+ assert.deepEqual(dialog.view.events,['mark','click']);
  const silent=submission();silent.view.afterClick='none';
- await assert.rejects(silent.submit,e=>e.code==='SUBMIT_REJECTED'&&e.notCreated===true&&e.unrecognized===true&&/没有新出现的提示/.test(e.message));
- assert.deepEqual(silent.view.events,['mark','click','list','list']);
+ await assert.rejects(silent.submit,e=>e.code==='SUBMIT_UNCLEAR'&&e.notCreated!==true&&/没有新出现的提示/.test(e.message));
+ assert.deepEqual(silent.view.events,['mark','click']);
 });
-test('点击后没有回到实例列表，但目标主机上恰好出现一个新实例：按已受理绑定',async()=>{
+test('点击后没有回到实例列表、目标主机上出现一个新实例：先保留记录，约2分钟后的核对再绑定',async()=>{
  const s=submission();s.view.afterClick='none';s.view.instances=[{id:'synthetic-latebind',region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'922机'}];
- const receipt=await s.submit();assert.equal(receipt.instanceId,'synthetic-latebind');assert.equal(receipt.evidence,'unique-new-instance-on-selected-host-after-click');
+ await assert.rejects(s.submit,e=>e.code==='SUBMIT_UNCLEAR');
+ s.task.operation={...s.task.operation,at:Date.now()-150000,clickedAt:Date.now()-150000};
+ const status=await s.adapter.reconcileUnclear(s.task);assert.equal(status.receipt.instanceId,'synthetic-latebind');
 });
 test('点击后按钮仍在加载：平台可能还在处理，保留提交记录交给约2分钟后的自动核对',async()=>{
  const s=submission();s.view.afterClick='none';const read=s.adapter.page.evaluate;
@@ -194,8 +197,8 @@ test('点击后出现 AutoDL 的架构/CUDA 提示弹窗：确认未创建后停
 });
 test('点击前已存在的同一报错不算本次结果；报错后很快跳回实例列表按已受理处理',async()=>{
  const old=submission();old.view.signals={toasts:['GPU资源不足，请稍后再试'],dialogs:[]};old.view.afterClick='toast';
- await assert.rejects(old.submit,e=>e.code==='SUBMIT_REJECTED'&&e.unrecognized===true&&!/GPU资源不足/.test(e.message));
- const late=submission();late.view.afterClick='toast';
+ await assert.rejects(old.submit,e=>e.code==='SUBMIT_UNCLEAR'&&!/GPU资源不足/.test(e.message));
+ const late=submission();late.view.afterClick='toast';late.adapter.rejectGraceMs=2000;// 留足等待：10ms 后的跳转在整套测试并行时也能落在观察窗口内
  late.adapter.page.getByRole=role=>role==='spinbutton'?{inputValue:async()=>String(late.view.extraDiskGB)}:{count:async()=>1,isEnabled:async()=>true,click:async()=>{late.view.events.push('click');late.view.signals={toasts:['合成网络提示'],dialogs:[]};setTimeout(()=>{late.view.url='https://www.autodl.com/console/instance/list';},10);}};
  const receipt=await late.submit();assert.equal(receipt.instanceId,'synthetic-newtarget');
 });
@@ -208,4 +211,44 @@ test('克隆：准备阶段刚复核过源实例时提交前不再另开页面�
  await fresh.submit();assert.equal(calls,0);
  const stale=submission({mode:'clone'});stale.adapter.revalidateSource=async()=>{calls++;};stale.adapter.prepared.sourceCheckedAt=Date.now()-16000;
  await stale.submit();assert.equal(calls,1);
+});
+test('按钮仍在加载时出现的失败提示不当作结果；平台拒绝后列表出现新实例不自动绑定；跳回列表后读列表失败仍记为已受理',async()=>{
+ // 按钮仍在加载：请求可能还没返回，等到加载上限仍在加载就保留记录
+ const loading=submission();loading.view.afterClick='toast';const read=loading.adapter.page.evaluate;
+ loading.adapter.page.evaluate=async(fn,args)=>{const r=await read(fn,args);return r&&{...r,button:{loading:true,disabled:true}};};
+ await assert.rejects(loading.submit,e=>e.code==='SUBMIT_UNCLEAR'&&/仍在加载/.test(e.message));assert.deepEqual(loading.view.events,['mark','click']);
+ // 明确的拒绝提示之后列表出现新实例：可能属于别的任务，不自动绑定
+ const rejected=submission();rejected.view.afterClick='toast';rejected.view.instances=[{id:'synthetic-other01',region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'922机'}];
+ await assert.rejects(rejected.submit,e=>e.code==='SUBMIT_UNCLEAR'&&e.noAutoBind===true&&/不自动绑定/.test(e.message));
+ // 已跳回实例列表，之后读取列表失败：仍记为已受理，不会被当成结果不明
+ const accepted=submission();accepted.adapter.scanInstances=async()=>{throw Object.assign(Error('list loading'),{code:'LIST_LOADING'});};
+ const receipt=await accepted.submit();assert.equal(receipt.instanceId,null);assert.equal(receipt.evidence,'accepted-navigation-only');assert.ok(receipt.acceptedAt);
+});
+test('复制数据盘时克隆页地址的源数据盘容量为空不能当作 0',()=>{
+ const s=submission({mode:'clone'});s.view.url='https://www.autodl.com/cloneInstance?region=beijing-B&id=synthetic-source&copy_data_disk=1&use_address=&image_cuda=12.1&expand_size=';
+ assert.throws(()=>s.adapter.readClonePage(s.task.config),{code:'DISK_UNKNOWN'});
+ s.view.url+='0';assert.equal(s.adapter.readClonePage(s.task.config).extraDiskGB,0);
+});
+test('实例列表同一页两行读成同一个实例 ID 时停止对账；新实例沿用源实例名称时仍按它自己的 ID 认作新实例',async()=>{
+ const s=submission();const a=s.adapter;a.settle=async()=>{};a.checkPage=async()=>{};
+ a.page={locator:()=>({count:async()=>0,isEnabled:async()=>false})};
+ a.readInstancePage=async()=>({texts:['x'],instances:[{id:'stable-diffusion1',ids:['stable-diffusion1','realaaaa-000001']},{id:'stable-diffusion1',ids:['stable-diffusion1','realbbbb-000002']}]});
+ await assert.rejects(AutoDLBrowserAdapter.prototype.scanInstances.call(a,'',{settled:true}),{code:'DOM_CHANGED'});
+ // 基线里只有源实例这一行（名称片段 + 源实例 ID）；新实例名称相同，但它自己的 ID 不在基线中
+ s.task.operation={stage:'accepted',quote:s.quote,baselineIds:['stable-diffusion1','sourceaa-000001']};
+ const rows=[{id:'stable-diffusion1',ids:['stable-diffusion1','sourceaa-000001'],region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'900机'},
+   {id:'stable-diffusion1',ids:['stable-diffusion1','newclone-000002'],region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'922机'}];
+ assert.deepEqual(a.newTargets(rows,s.task).map(i=>i.id),['newclone-000002']);
+});
+test('先前被拒绝的点击之后，别的主机上出现的相符新实例会被报告为可能多租；别的任务已绑定的实例不算',()=>{
+ const s=submission();const a=s.adapter;
+ s.task.submitRejections=[{at:Date.now()-60000,baselineIds:['old00001-aaaaaa'],hostNumber:'921机'}];
+ s.task.operation={stage:'accepted',quote:s.quote,baselineIds:['old00001-aaaaaa']};
+ const rows=[{id:'old00001-aaaaaa',region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'900机'},
+   {id:'late0001-aaaaaa',region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'921机'},
+   {id:'bound001-aaaaaa',region:'北京B区',gpuModel:'RTX 4090',gpuCount:1,hostNumber:'922机'}];
+ assert.deepEqual(a.strays(s.task,rows,'bound001-aaaaaa'),['late0001-aaaaaa']);
+ a.claimedIds=()=>new Set(['late0001-aaaaaa']);assert.deepEqual(a.strays(s.task,rows,'bound001-aaaaaa'),[]);
+ assert.deepEqual(a.newTargets(rows,s.task).map(i=>i.id),['bound001-aaaaaa']);
+ s.task.submitRejections=[];assert.deepEqual(a.strays(s.task,rows,'bound001-aaaaaa'),[]);
 });

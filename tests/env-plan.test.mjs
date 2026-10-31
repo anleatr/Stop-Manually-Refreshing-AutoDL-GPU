@@ -116,3 +116,56 @@ test('显存要求未知时不判“可用”；资料没写显存时按模型�
   assert.equal(sizeEstimate('支持 7B、14B 与 72B 三种规模').ambiguous, true);
   assert.equal(sizeEstimate('支持 7B、14B 与 72B 三种规模', '推理 14B').paramsB, 14);
 });
+test('资料写明的显存是别的模型大小时改按估算；说不清是哪个模型且估算更大时介于两者之间的卡标为有风险', () => {
+  const st = (text, request, gpuCount = 1) => Object.fromEntries(planGpus(CATALOG, extractConstraints(text, { request }), { gpuCount }).map(g => [g.model, g.status]));
+  // 审查发现：资料只写了 2B / 7B 的显存，需求是 27B / 72B，旧逻辑把显存远远不够的卡判为可用
+  const gemma = st('the 2B model needs at least 8GB VRAM', '部署 gemma 27B fp16');
+  for (const m of ['RTX 2080 Ti', 'RTX 3090', 'RTX 4090', 'RTX 5090', 'V100-SXM2-32GB']) assert.equal(gemma[m], 'excluded', m);
+  assert.equal(gemma['A800-80GB-NVLink'], 'ok');
+  assert.deepEqual(vramNeed(extractConstraints('the 2B model needs at least 8GB VRAM', { request: '部署 gemma 27B fp16' })), { gb: 65, basis: 'estimate', ignoredGB: 8 });
+  assert.match(buildPlan(extractConstraints('the 2B model needs at least 8GB VRAM', { request: '部署 gemma 27B fp16' }), CATALOG).notices[0], /说的是别的模型大小/);
+  assert.ok(Object.values(st('Qwen-7B requires at least 16GB of GPU memory', '部署 Qwen-72B')).every(s => s === 'excluded' || s === 'check'));
+  // 资料写了 24GB 但没说是哪个模型，需求 27B：24～65GB 的卡有风险
+  const vague = st('推理需要至少 24GB 显存', '部署 27B 模型');
+  assert.equal(vague['RTX 4090'], 'warn'); assert.equal(vague['RTX 3080 Ti'], 'excluded'); assert.equal(vague['A800-80GB-NVLink'], 'ok');
+  // FastChat：同一句写了 7B 与 13B，规则只认出 14GB；需求 13B 时 24GB 的卡不再判为可用
+  const chat = st('The command below requires around 14GB of GPU memory for Vicuna-7B and 28GB of GPU memory for Vicuna-13B.', '单卡运行 Vicuna-13B');
+  assert.equal(chat['RTX 4090'], 'warn'); assert.equal(chat['V100-SXM2-32GB'], 'ok'); assert.equal(chat['RTX 3080 Ti'], 'excluded');
+  // 没写需求、资料有多个模型大小而写明的显存没提到最大的那个：满足的卡也只是有风险
+  assert.equal(st('the 2B model needs at least 8GB VRAM\nWe also release a 27B model.')['A800-80GB-NVLink'], 'warn');
+  // 写明的显存与需求是同一大小时照常以资料为准
+  assert.equal(st('Vicuna-13B requires around 28GB of GPU memory.', '推理 Vicuna-13B')['RTX 5090'], 'ok');
+});
+test('模型补充的数值与版本按完整数字核对；规则读到明确的显存时模型只能调高', () => {
+  const src = 'Vicuna-13B requires around 28GB of GPU memory.\ntorch==2.1.0\nPython 3.10\nWe recommend Qwen-14B.\nPyTorch 2.10\nCUDA 12.8\n+cu121';
+  const { accepted, rejected } = checkModelItems([
+    { field: 'vramGB', value: '13', evidence: 'Vicuna-13B requires around 28GB' }, { field: 'vramGB', value: '2', evidence: 'torch==2.1.0' },
+    { field: 'vramGB', value: '0.5', evidence: 'torch==2.1.0' }, { field: 'vramGB', value: '3', evidence: 'Python 3.10' }, { field: 'vramGB', value: '14', evidence: 'We recommend Qwen-14B.' },
+    { field: 'torch', value: '==2.1', evidence: 'PyTorch 2.10' }, { field: 'torch', value: '==2.8', evidence: 'CUDA 12.8' }, { field: 'python', value: '==3.1', evidence: 'Python 3.10' },
+    { field: 'vramGB', value: '28', evidence: 'Vicuna-13B requires around 28GB' }, { field: 'torch', value: '==2.1', evidence: 'torch==2.1.0' },
+    { field: 'python', value: '==3.10', evidence: 'Python 3.10' }, { field: 'cuda', value: '12.1', evidence: '+cu121' },
+  ], src);
+  assert.deepEqual(accepted.map(a => a.field), ['vramGB', 'torch', 'python', 'cuda']); assert.equal(accepted[0].value, 28);
+  assert.equal(rejected.length, 8); assert.equal(rejected[2].reason, '数值无效');
+  const many = checkModelItems(Array.from({ length: 14 }, () => ({ field: 'vramGB', value: '28', evidence: 'Vicuna-13B requires around 28GB' })), src);
+  assert.equal(many.accepted.length, 12); assert.match(many.rejected[0].reason, /超过 12 条/);
+  const rules = extractConstraints('推理需要至少 24GB 显存\n小模型 14GB 也可以');
+  const lower = mergeConstraints(rules, [{ field: 'vramGB', value: 14, evidence: '小模型 14GB 也可以' }]);
+  assert.equal(lower.vramGB.value, 24); assert.equal(lower.vramGB.source, 'rule'); assert.match(lower.vramGB.note, /较低的 14GB/);
+  assert.equal(mergeConstraints(rules, [{ field: 'vramGB', value: 40, evidence: '推理需要至少 24GB 显存' }]).vramGB.value, 40);
+  const other = extractConstraints('the 70B model needs at least 140GB VRAM\nthe 7B model needs 16GB', { request: '推理 7B' });
+  assert.equal(mergeConstraints(other, [{ field: 'vramGB', value: 16, evidence: 'the 7B model needs 16GB' }]).vramGB.value, 16);
+  const byModel = mergeConstraints(extractConstraints('需要至少 24GB 显存\nTested with torch 2.1'), [{ field: 'torch', spec: [['==', '2.1']], evidence: 'Tested with torch 2.1' }]);
+  assert.match(planGpus(CATALOG, byModel).find(g => g.model === 'RTX 5090').reasons.join(' '), /来自模型补充，请核对原文/);
+});
+test('超长空白输入不会让规划规则长时间占用后台；常见写法仍能读出', () => {
+  const n = 23900;
+  for (const text of ['CUDA' + ' '.repeat(n), 'torch 2.1' + ' '.repeat(n), 'requires about' + ' '.repeat(n), 'VRAM:' + ' '.repeat(n), '\n'.repeat(n), '\n'.repeat(n) + 'torch']) {
+    const started = performance.now(); extractConstraints(text, { request: '部署 27B' });
+    assert.ok(performance.now() - started < 100, JSON.stringify(text.slice(0, 12)));
+  }
+  assert.deepEqual(extractConstraints('torch 2.1.0').torch.spec, [['==', '2.1.0']]);
+  assert.deepEqual(extractConstraints('CUDA 11.8 or higher').cuda.spec, [['>=', '11.8']]);
+  assert.equal(extractConstraints('Inference requires at least  24 GB of GPU memory').vramGB.value, 24);
+  assert.equal(extractConstraints('pip install flash-attn\n  flash_attn').features[0].value, 'flash-attn');
+});

@@ -39,3 +39,9 @@ test('克隆流程的点击只允许“更多”“克隆实例”“继续”�
   // 程序不会代为点击弹窗中的按钮（包括 AutoDL 提示中的“继续”“确定”）。
   assert.doesNotMatch(source, /getByRole\('button',\s*\{\s*name:\s*'(?:确定|确认|我知道了|去充值)'/);
 });
+test('适配器不使用绕过点击清单检查的写法：鼠标坐标、派发事件、轻触、页面内点击、双引号文字定位、xpath 或 text= 选择器、除 Escape 外的按键',()=>{
+  for (const [name, pattern] of [['page.mouse', /\.mouse\./], ['dispatchEvent', /dispatchEvent\(/], ['tap()', /\.tap\(/], ['页面内 click()', /evaluate[^;]*\.click\(\)/],
+    ['双引号文字定位', /(?:getByText|getByRole|hasText)[^;]{0,40}"[^"]*"/], ['xpath', /xpath=|\/\/(?:button|span|div|a)\[/], ['text= 选择器', /['"]text=/], [':has-text', /:has-text\(/],
+    ['除 Escape 外的按键', /\.press\(\s*'(?!Escape')/]])
+    assert.doesNotMatch(source, pattern, name);
+});

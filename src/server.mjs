@@ -109,8 +109,13 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
       if (!Number.isInteger(pid) || pid <= 0) fail('LOCK','运行锁内容异常，请核对没有其他服务后删除 .runtime/server.lock');
       try { process.kill(pid,0); fail('LOCK','已有服务正在使用此状态目录，请勿启动第二个抢卡进程'); }
       catch(error) { if(error.code !== 'ESRCH') throw error; }
+      // 接管失效的运行锁：删除前确认锁文件仍是那个已退出的进程；写入后稍等再读一次，若被同时启动的另一进程接管就退出。
+      // 避免两次几乎同时启动时，一个进程删掉另一个刚写入的锁，两个后台共用同一状态。
+      if (fs.readFileSync(lockPath,'utf8') !== String(pid)) fail('LOCK','运行锁刚被另一个进程接管，请勿同时启动两个服务');
       fs.unlinkSync(lockPath);
       const fd = fs.openSync(lockPath,'wx',0o600); fs.writeFileSync(fd,String(process.pid)); fs.closeSync(fd);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+      if (fs.readFileSync(lockPath,'utf8') !== String(process.pid)) fail('LOCK','运行锁被同时启动的另一个进程接管，本进程退出；请勿同时启动两个服务');
     }
   }
   const releaseLock = () => {
@@ -179,11 +184,13 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
     res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Cross-Origin-Resource-Policy','same-origin');
+    // 别的网站打开控制台后不能保留对这个标签页的引用（例如之后把它跳转到仿冒页面）。
+    res.setHeader('Cross-Origin-Opener-Policy','same-origin');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       const host = assertLocalRequest(req);
       const url = new URL(req.url,`http://${host}`);
-      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:'0.1.0'});
+      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:'0.2.0'});
       if(url.pathname.startsWith('/api/')) {
         if(req.headers['x-local-token'] !== token) fail('TOKEN','本地访问令牌无效，请重新加载页面',{status:403});
         if(req.method === 'GET' && url.pathname === '/api/state') return json(res,200,{...store.publicState(),

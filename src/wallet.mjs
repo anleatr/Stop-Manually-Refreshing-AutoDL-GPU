@@ -3,9 +3,29 @@ export const BALANCE_URL = 'https://api.autodl.com/api/v1/dev/wallet/balance';
 const MAX_AGE = 30000;
 // 网络错误、超时、接口暂时不可用（非鉴权失败）：任务退避后自动重试，连续多次才转人工处理。
 const BALANCE_RETRY = { retryable: true, maxRetries: 5 };
+// AutoDL 下单页：租用多卡实例时钱包余额需大于 10 元（单位：千分之一元）。
+const MULTI_CARD_MIN_MILLI = 10001;
+// 读取响应正文，超过上限就停止读取并返回 null，不把超大响应读进内存。
+async function cappedText(response, limit) {
+  const reader = response.body?.getReader?.();
+  if (!reader) { const text = await response.text(); return text.length > limit ? null : text; }
+  const chunks = []; let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) { await reader.cancel().catch(() => {}); return null; }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock?.(); }
+  return Buffer.concat(chunks).toString('utf8');
+}
 // 所有比较均使用千分元，向上取整预算，避免浮点误差使不足余额通过。
+// 多卡时报价不低于“主机单卡价 × 卡数”：页面的配置费用若只显示单卡价或尚未刷新，按较高者估算，不低估预算。
 export function estimateBudget(config, quote) {
-  const hourly = quote == null ? config.maxTotalHourly : quote.hourly;
+  const listed = Number.isFinite(quote?.host?.price) && quote.host.price > 0 ? quote.host.price * config.gpuCount : 0;
+  const hourly = quote == null ? config.maxTotalHourly : Number.isFinite(quote.hourly) ? Math.max(quote.hourly, listed) : quote.hourly;
   const storageDaily = quote == null ? config.maxStorageDaily : quote.storageDaily;
   const hours = config.expectedHours ?? 1, reserve = config.balanceReserve ?? 0;
   if (![hourly, storageDaily, hours, reserve].every(Number.isFinite) || hourly <= 0 || storageDaily < 0 || hours <= 0 || reserve < 0)
@@ -75,8 +95,8 @@ export class Wallet {
           redirect: 'error', signal: controller.signal });
         if (!response.ok) throw new AppError('BALANCE_API', response.status === 401 || response.status === 403
           ? '余额查询鉴权失败，请核对开发者 Token' : 'AutoDL 余额接口暂时不可用', { status: 409, ...(response.status === 401 || response.status === 403 ? {} : BALANCE_RETRY) });
-        const text = await response.text();
-        if (text.length > 65536) throw new Error('oversize response');
+        const text = await cappedText(response, 65536);
+        if (text === null) throw new Error('oversize response');
         const result = JSON.parse(text), data = result?.data;
         if (result?.code !== 'Success') throw new AppError('BALANCE_API', 'AutoDL 拒绝余额查询，请检查开发者 Token 和账号状态', { status: 409 });
         if (!Number.isSafeInteger(data?.assets) || !Number.isSafeInteger(data?.voucher_balance) || data.voucher_balance < 0)
@@ -106,6 +126,9 @@ export class Wallet {
       checkedAt: snapshot.checkedAt, credentialRevision: this.#generation, sufficient: availableMilli >= budget.requiredMilli };
     if (!result.sufficient) fail('BALANCE_INSUFFICIENT', '可用余额 ¥' + result.available.toFixed(3) + '，低于本次预检所需 ¥'
       + budget.required.toFixed(3) + '；请充值或调整运行时长、预算及保留余额', { status: 409 });
+    // AutoDL 下单页的规则：租多卡时钱包余额（不含代金券）需大于 10 元，否则弹出“余额不足”。
+    if (config.gpuCount > 1 && Math.round(snapshot.balance * 1000) < MULTI_CARD_MIN_MILLI) fail('BALANCE_INSUFFICIENT', '钱包余额 ¥' + snapshot.balance.toFixed(2)
+      + '：AutoDL 规定租用多卡实例时钱包余额需大于 10 元（代金券不计），请先充值', { status: 409 });
     return result;
   }
   confirm(check) {

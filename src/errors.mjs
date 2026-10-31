@@ -1,5 +1,5 @@
 export class AppError extends Error {
-  constructor(code, message, { retryable = false, status = 400, conflict, maxRetries, race = false, notCreated = false, unrecognized = false, absent = false, lateIds, hostProblem = false } = {}) {
+  constructor(code, message, { retryable = false, status = 400, conflict, maxRetries, race = false, notCreated = false, unrecognized = false, absent = false, lateIds, hostProblem = false, noAutoBind = false } = {}) {
     super(message); this.name = 'AppError'; this.code = code;
     // race：候选在提交前被他人抢走或库存/价格变化，属于正常竞争，立即重查、不计错误、不退避。
     this.retryable = retryable || race; this.status = status;
@@ -14,6 +14,8 @@ export class AppError extends Error {
     if (Array.isArray(lateIds)) this.lateIds = lateIds;
     // hostProblem：点击之前就发现这台主机满足不了任务（如起租卡数），换主机并暂时不选它。
     if (hostProblem) this.hostProblem = true;
+    // noAutoBind：平台已明确拒绝，但实例列表出现了新实例；它可能属于别的任务或手动创建，不自动绑定，交给用户核对。
+    if (noAutoBind) this.noAutoBind = true;
     if (conflict) this.conflict = conflict;
     // 可短暂自愈但不能无限重试的页面问题：连续失败超过次数后转人工处理。
     if (Number.isInteger(maxRetries)) this.maxRetries = maxRetries;
@@ -23,6 +25,9 @@ export const fail = (code, message, options) => { throw new AppError(code, messa
 export const messageOf = error => String(error?.message || error).slice(0, 800);
 export function redact(value) {
   return String(value).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/https?:\/\/[^\s"<>]+/g, '[网址已隐藏]')
-    .replace(/(token|password|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, '$1=[隐藏]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [隐藏]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[隐藏]')
+    .replace(/(\b(?:cookie|set-cookie|authorization)\s*:\s*)[^\r\n]+/gi, '$1[隐藏]')
+    .replace(/((?:x-api-key|api[_-]?key|access[_-]?token|token|password|authorization|cookie)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;\r\n]+)/gi, '$1[隐藏]')
     .slice(0, 1200);
 }

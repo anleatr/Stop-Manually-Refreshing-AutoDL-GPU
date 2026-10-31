@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { AppError, fail, redact } from '../errors.mjs';
+import { AppError, fail, redact, messageOf } from '../errors.mjs';
 import { gpuKey, archCudaProblem, candidateReasons, verifyQuote, requiredDiskGB, wantsDataDisk } from '../matching.mjs';
 import { parseHostRow, parseInstanceRow, parseQuoteText, parseGpuStockLabel } from './dom.mjs';
 import { SESSION_DETAILS, classifySessionSnapshot, readSessionSnapshot, isNetworkAccessDenied } from './autodl-session.mjs';
@@ -39,6 +39,13 @@ function identityProblem(instance, t) {
   if (instance.id === c.sourceId) wrong.push('是源实例');
   return '在列表中' + (wrong.join('、') || '与任务不符') + '，任务要求 ' + c.regions.join('、') + ' · ' + c.gpuModel + ' × ' + c.gpuCount;
 }
+// 一行中所有形如实例 ID 的片段（实例名称或备注也可能长这样）。基线保存全部片段：
+// 克隆出的新实例沿用源实例的名称时，第一个片段可能与源实例相同，但它自己的实例 ID 不在基线中，仍会被认作新实例。
+const idsOf = i => i?.ids?.length ? i.ids : i?.id ? [i.id] : [];
+const isNew = (i, baseline) => idsOf(i).some(id => !baseline.has(id));
+// 新实例的 ID：取基线中没有的那个片段。
+const freshId = (i, baseline) => idsOf(i).find(id => !baseline.has(id)) || i.id;
+const hasId = (i, id) => idsOf(i).includes(id);
 // 平台拒绝创建时的提示：账户类问题需要人工处理，其余（库存不足、已被占用等）按竞争失败继续监测。
 const ACCOUNT_PROBLEM = /余额|欠费|充值|实名|认证|权限|封禁|冻结|限额|上限|配额/;
 // 点击后新出现的提示是否表示失败。AutoDL 的“该主机已租满”是无图标、标题为“错误”的通知（2026-10-29 用户截图）。
@@ -100,12 +107,13 @@ function readCheckboxes(labels, pattern) {
 }
 // 本轮扫描摘要：只陈述实际读取的范围；首页模式未翻页时不声称已遍历全部。
 function scanSummary({ config, hosts, regions, found, firstPageOnly, timing }) {
-  const where = regions.map(r => r.region + (r.missing ? '（没有此型号，已跳过）' : r.found ? '（读到第 ' + r.pages + ' 页命中）' : r.stalled ? '（翻页停滞，已读 ' + r.pages + ' 页）'
+  const where = regions.map(r => r.region + (r.missing ? '（没有此型号，已跳过）' : r.unavailable ? '（' + r.unavailable + '当前不可选，已跳过）' : r.found ? '（读到第 ' + r.pages + ' 页命中）' : r.stalled ? '（翻页停滞，已读 ' + r.pages + ' 页）'
     : r.exhausted ? '（' + r.pages + ' 页，已到末页）' : '（仅读第 1 页）')).join('、');
   const s = ms => (ms / 1000).toFixed(1);
   const head = (firstPageOnly ? '首页快速检查' : '完整翻页检查') + '：' + config.gpuModel + ' × ' + config.gpuCount + '，' + where
     + '，共读取 ' + hosts.length + ' 台主机，用时 ' + s(timing.totalMs) + ' 秒（打开页面 ' + s(timing.openMs) + '、筛选 ' + s(timing.filterMs) + '、读列表 ' + s(timing.scanMs) + '）';
   if (found) return head + '；找到合格候选，停止扫描并立即核验配置报价';
+  if (regions.length && regions.every(r => r.unavailable || r.missing)) return head + '；所选地区的地区、型号或卡数选项当前都不可选，下一轮继续检查';
   if (regions.some(r => r.stalled)) return head + '；翻页后内容没有变化，本轮未读完列表，下轮重新检查';
   if (regions.every(r => r.exhausted)) return head + '；所选地区列表均已读到末页，未找到符合条件的主机';
   return head + '；已读页面未找到符合条件的主机，后续页面' + (config.fullScanSeconds ? '约每 ' + config.fullScanSeconds + ' 秒' : '定期') + '完整翻页检查一次';
@@ -134,6 +142,8 @@ export class AutoDLBrowserAdapter {
     this.catalogTab = null;
     // 克隆页地址缓存（仅内存）：减少展开源实例菜单的次数。
     this.cloneCache = null; this.cloneCacheMs = 10 * 60000;
+    // 别的任务已绑定的实例 ID（由任务引擎提供），对账时不把它们当成本任务的新实例。
+    this.claimedIds = () => new Set();
     this.session = { state: 'not_open', ...SESSION_DETAILS.not_open, checkedAt: null };
     this.lastStatus = this.session.message;
   }
@@ -168,6 +178,8 @@ export class AutoDLBrowserAdapter {
         this.context = await chromium.launchPersistentContext(this.profileDir, {
           // 人工登录使用浏览器安全沙箱，并让页面跟随用户调整的窗口尺寸。
           headless: false, chromiumSandbox: true, viewport: null, locale: 'zh-CN',
+          // 保留浏览器的钓鱼网站检测与组件更新（含证书吊销列表）；Playwright 默认会关闭它们。
+          ignoreDefaultArgs: ['--disable-client-side-phishing-detection', '--disable-component-update'],
           ...await this.launchChannel(chromium),
         });
       } catch (e) {
@@ -383,6 +395,14 @@ export class AutoDLBrowserAdapter {
     for (let turn = 0; turn < 100; turn++) {
       if (turn || !settled) { await this.settle(); await this.checkPage(); }
       const { texts, instances } = await this.readInstancePage(expectedModel);
+      // 同一页两行读成同一个实例 ID（例如实例名称或备注长得像实例 ID）：分不清是哪一行，可能漏掉新实例，停止对账，不按“未创建”处理。
+      const page = new Map();
+      for (const info of instances) {
+        const other = page.get(info.id);
+        if (other && idsOf(other).join('|') !== idsOf(info).join('|'))
+          fail('DOM_CHANGED', '实例列表中有两行读成了同一个实例 ID“' + info.id + '”（实例名称或备注可能与实例 ID 写法相同），无法可靠核对；请修改实例名称或备注后再试');
+        page.set(info.id, info);
+      }
       for (const info of instances) rows.set(info.id, info);
       const next = this.page.locator('.el-pagination .btn-next:visible');
       if (!(await next.count()) || !(await next.isEnabled())) return [...rows.values()];
@@ -396,10 +416,14 @@ export class AutoDLBrowserAdapter {
     await this.goto(LIST);
     for (let turn=0; turn<100; turn++) {
       const rows = this.page.locator('table tbody tr').filter({ hasText: id });
-      if (await rows.count()) {
-        const row = rows.first(); const info = parseInstanceRow(await row.innerText(), expectedModel);
-        if (info?.id !== id) fail('INSTANCE', '实例 ID 未精确匹配');
-        return { row, info };
+      const count = await rows.count();
+      if (count) {
+        // 只认实例 ID 片段中确实含有该 ID 的行；有多行（例如另一实例的备注里写了这个 ID）时分不清，停止而不是取第一行。
+        const matched = [];
+        for (let i = 0; i < count; i++) { const row = rows.nth(i), info = parseInstanceRow(await row.innerText(), expectedModel); if (hasId(info, id)) matched.push({ row, info }); }
+        if (matched.length > 1) fail('INSTANCE', '实例列表中有 ' + matched.length + ' 行含有实例 ID“' + id + '”（可能是另一实例的名称或备注写了这个 ID），无法确认是哪一行；请修改名称或备注后再试');
+        if (matched.length === 1) return { row: matched[0].row, info: { ...matched[0].info, id } };
+        fail('INSTANCE', '实例 ID 未精确匹配');
       }
       const next = this.page.locator('.el-pagination .btn-next:visible');
       if (!(await next.count()) || !(await next.isEnabled())) break;
@@ -413,7 +437,9 @@ export class AutoDLBrowserAdapter {
   // 克隆页地址在内存中保留约10分钟，期间直接打开，不再反复展开源实例的菜单；地址或页面不符时重新走一遍菜单。
   async openClone(t) {
     const c = t.config, key = [t.id, c.sourceId, wantsDataDisk(c)].join('|'), cached = this.cloneCache;
-    if (cached?.key === key && Date.now() - cached.at < this.cloneCacheMs) {
+    // 复制数据盘时克隆页地址里的源数据盘容量只沿用 1 分钟：期间源数据盘若被扩容，重新打开才能读到新容量。
+    const maxAge = wantsDataDisk(c) ? Math.min(this.cloneCacheMs, 60000) : this.cloneCacheMs;
+    if (cached?.key === key && Date.now() - cached.at < maxAge) {
       try { await this.goto(cached.url); return { ...cached.info, ...this.readClonePage(c) }; }
       catch (error) { if (!['CLONE_URL', 'COPY_DISK', 'DISK_UNKNOWN'].includes(error.code)) throw error; }
       this.cloneCache = null;
@@ -422,7 +448,7 @@ export class AutoDLBrowserAdapter {
     const { row, info } = await this.findInstanceRow(c.sourceId, c.gpuModel);
     validateCloneSource(c, info);
     // 点击前再核对这一行仍是源实例，避免列表重排后点到别的实例。
-    if (parseInstanceRow(await row.innerText(), c.gpuModel)?.id !== c.sourceId) fail('SOURCE_GUARD', '源实例所在行在点击前发生变化，未点击任何按钮');
+    if (!hasId(parseInstanceRow(await row.innerText(), c.gpuModel), c.sourceId)) fail('SOURCE_GUARD', '源实例所在行在点击前发生变化，未点击任何按钮');
     await this.cloneClick(row.getByRole('button', { name: '更多', exact: true }), '更多');
     const item = this.page.getByText('克隆实例', { exact: true }).filter({ visible: true });
     await item.first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
@@ -466,8 +492,9 @@ export class AutoDLBrowserAdapter {
   readClonePage(c) {
     const url = new URL(this.page.url()), problem = cloneUrlProblem(url, c);
     if (problem) fail(/数据盘/.test(problem) ? 'COPY_DISK' : 'CLONE_URL', '克隆页面' + problem);
-    const bytes = Number(url.searchParams.get('expand_size') || 0);
-    if ((wantsDataDisk(c) && !url.searchParams.has('expand_size')) || !Number.isFinite(bytes) || bytes < 0) fail('DISK_UNKNOWN', '无法核实源数据盘扩容容量');
+    const raw = url.searchParams.get('expand_size'), bytes = Number(raw || 0);
+    // 复制数据盘时必须读到明确的源数据盘容量（纯数字）；为空或缺失时不能当作 0，否则目标数据盘可能装不下。
+    if ((wantsDataDisk(c) && !/^\d+$/.test(raw || '')) || !Number.isFinite(bytes) || bytes < 0) fail('DISK_UNKNOWN', '无法核实源数据盘扩容容量');
     const sourceCuda = String(url.searchParams.get('image_cuda') || '').match(/1\d\.\d{1,2}/)?.[0];
     if (!sourceCuda) fail('CUDA_SOURCE', 'AutoDL 克隆页没有给出源实例镜像的 CUDA 版本，无法筛选宿主驱动；请在 AutoDL 核对源实例镜像');
     const arch = archCudaProblem(c.gpuModel, sourceCuda);
@@ -576,15 +603,18 @@ export class AutoDLBrowserAdapter {
     await this.radio('按量计费');
     const hosts = [], regions = []; let scanMs = 0;
     for (const region of t.config.regions) {
-      await this.radio(region);
       // 多地区监测时，某个地区的型号筛选里没有此型号就跳过该地区；所有所选地区都没有才报错停止。
-      try { await this.selectModel(t.config.gpuModel); }
-      catch (error) {
+      // 地区、型号或卡数选项当前不可选（灰色）：本轮跳过该地区，不点击，下一轮再看；不当作页面故障停下任务。
+      let step = '地区';
+      try {
+        await this.radio(region); step = '型号'; await this.selectModel(t.config.gpuModel);
+        step = '卡数'; await this.radio(String(t.config.gpuCount));
+      } catch (error) {
+        if (error.code === 'OPTION_DISABLED') { regions.push({ region, pages: 0, exhausted: false, stalled: false, found: false, unavailable: step }); continue; }
         if (!error.absent || t.config.regions.length < 2) throw error;
         regions.push({ region, pages: 0, exhausted: true, stalled: false, found: false, missing: true });
         continue;
       }
-      await this.radio(String(t.config.gpuCount));
       const scanStarted = Date.now();
       const scan = await this.scanHosts(region, { config: t.config, source, firstPageOnly, skip });
       scanMs += Date.now() - scanStarted;
@@ -804,40 +834,60 @@ export class AutoDLBrowserAdapter {
       await this.checkGpuCountKept(c.gpuCount);
       const extraDiskGB = requiredDiskGB(c,source);
       const expand = this.page.locator('label.el-checkbox').filter({hasText:/^\s*需要扩容\s*$/});
-      await this.checkbox(expand,extraDiskGB > 0,'需要扩容');
-      if (extraDiskGB > 0) {
-        const spin = this.page.getByRole('spinbutton');
-        if (await spin.count() !== 1) fail('DISK_DOM', '无法唯一定位数据盘扩容输入框');
-        await spin.fill(String(extraDiskGB)); await spin.blur();
-        if (Number(await spin.inputValue()) !== extraDiskGB) fail('DISK_DOM', '目标数据盘扩容值未正确生效');
+      // 这台主机给不了所需扩容（“需要扩容”不可选，或填入的容量被页面改小）：未点击，换下一台主机并暂时不选它。
+      try {
+        await this.checkbox(expand,extraDiskGB > 0,'需要扩容');
+        if (extraDiskGB > 0) {
+          const spin = this.page.getByRole('spinbutton');
+          if (await spin.count() !== 1) fail('DISK_DOM', '无法唯一定位数据盘扩容输入框');
+          await spin.fill(String(extraDiskGB)); await spin.blur();
+          if (Number(await spin.inputValue()) !== extraDiskGB) throw new AppError('DISK_REFUSED', '这台主机没有接受 ' + extraDiskGB + ' GB 数据盘扩容');
+        }
+      } catch (error) {
+        if (!['OPTION_DISABLED', 'DISK_REFUSED'].includes(error.code)) throw error;
+        throw new AppError('DISK_HOST', messageOf(error) + '；未提交，改试其他主机', { ...RACE, hostProblem: true });
       }
       let image = '继承源实例系统盘';
       if (c.mode === 'create') image = await this.selectImage(c);
       await this.settle();
       const formMs = Date.now() - started;
+      // 源实例状态的读取时间记为读取实例列表之前，不把读取所花的时间算作“刚核验过”。
+      const listedAt = Date.now();
       const before = await baseline.collect();
       this.lateCreation(t, before);
       // 克隆：用同一份实例列表复核源实例仍存在、已关机且规格不变。
-      if (c.mode === 'clone') validateCloneSource(c, before.find(i => i.id === c.sourceId));
+      if (c.mode === 'clone') { const row = before.find(i => hasId(i, c.sourceId)); validateCloneSource(c, row && { ...row, id: c.sourceId }); }
       const money = parseQuoteText(await this.page.locator('body').innerText());
       const quote = { host:current, gpuCount:c.gpuCount, extraDiskGB, copyDataDisk: c.mode === 'clone' && !!new URL(this.page.url()).searchParams.get('copy_data_disk'),
-        ...money, baselineIds: before.map(x=>x.id), imageVerified:true, image, preparedAt:Date.now(),
+        ...money, baselineIds: [...new Set(before.flatMap(idsOf))], imageVerified:true, image, preparedAt:Date.now(),
         timing:{ reused:reuse, formMs, totalMs:Date.now() - started } };
       const reasons = verifyQuote(quote,c,source);
       if (reasons.length) fail('QUOTE', `最终费用或配置校验失败：${reasons.join('、')}`);
       if (!(await (await this.submitButton()).isEnabled())) fail('SUBMIT_DISABLED', 'AutoDL 的“创建并开机”按钮不可用，请检查余额、镜像与配置');
-      this.prepared = { taskId:t.id, quote, source, sourceCheckedAt: c.mode === 'clone' ? Date.now() : null }; return quote;
+      this.prepared = { taskId:t.id, quote, source, sourceCheckedAt: c.mode === 'clone' ? listedAt : null }; return quote;
     } finally { await baseline.close(); }
   }
   // 此前被拒绝或确认未创建的点击之后（30分钟内），实例列表出现了与任务相符的新实例：可能是平台延迟创建，停止并请用户核对，不再点击。
-  // 不限于被拒绝时的那台主机，否则延迟创建在 A 主机、下一次在 B 主机点击成功，会多租一台。
+  // 不限于被拒绝时的那台主机，否则延迟创建在 A 主机、下一次在 B 主机点击成功，会多租一台。别的任务已绑定的实例不算。
   lateCreation(t, instances) {
+    const claimed = this.claimedIds(t);
     for (const rejection of (t.submitRejections || []).filter(r => Date.now() - r.at < 30 * 60000 && Array.isArray(r.baselineIds))) {
-      const late = instances.filter(i => !rejection.baselineIds.includes(i.id) && this.verifyIdentity(i, t));
+      const baseline = new Set(rejection.baselineIds);
+      const late = instances.filter(i => isNew(i, baseline)).map(i => ({ ...i, id: freshId(i, baseline) }))
+        .filter(i => !claimed.has(i.id) && this.verifyIdentity(i, t));
       if (late.length) throw new AppError('SUBMIT_LATE', (rejection.hostNumber ? '此前在 ' + rejection.hostNumber + ' 被拒绝或确认未创建的提交' : '此前被拒绝或确认未创建的提交')
         + '之后，实例列表出现了与任务相符的新实例 ' + late.map(i => i.id + (i.hostNumber ? '（' + i.hostNumber + '）' : '')).slice(0, 3).join('、')
-        + '，可能是延迟创建；已停止自动提交，避免多租。请到 AutoDL 核对，确认后再恢复任务', { lateIds: late.map(i => i.id) });
+        + '，可能是延迟创建；已停止自动提交，避免多租。请到 AutoDL 核对，确认后再恢复任务', { lateIds: [...new Set(late.flatMap(idsOf).concat(late.map(i => i.id)))] });
     }
+  }
+  // 绑定了本次的新实例之后，再看 30 分钟内被拒绝或确认未创建的点击之后，别的主机上是否也出现了与任务相符的新实例（延迟创建）。
+  // 只用于提醒“可能多租了一台”，不改变本次的绑定。
+  strays(t, instances, boundId) {
+    const recent = (t.submitRejections || []).filter(r => Date.now() - r.at < 30 * 60000 && Array.isArray(r.baselineIds));
+    if (!recent.length) return [];
+    const now = new Set(t.operation?.baselineIds || []), claimed = this.claimedIds(t), known = new Set(t.lateInstanceIds || []);
+    return instances.filter(i => isNew(i, now) && recent.some(r => isNew(i, new Set(r.baselineIds)))).map(i => ({ ...i, id: freshId(i, now) }))
+      .filter(i => i.id !== boundId && !claimed.has(i.id) && !known.has(i.id) && this.verifyIdentity(i, t)).map(i => i.id);
   }
   // 选中主机后 GPU 数量仍是任务要求的数量；否则这台主机有起租卡数等限制，按竞争失败换下一台，并暂时不选它。
   async checkGpuCountKept(count) {
@@ -934,25 +984,29 @@ export class AutoDLBrowserAdapter {
     await button.click();
     // 只读取页面结果；未经验证的弹窗不会被猜测确认，防止触发其他付费/破坏操作。
     const outcome = await this.clickOutcome(formUrl), seconds = Math.round((outcome.waitedMs ?? this.clickOutcomeMs) / 1000);
-    // 按钮仍在加载：请求可能还在处理，保留记录，按点击后约2分钟的自动核对处理。
-    if (outcome.kind === 'unknown' && outcome.busy) fail('SUBMIT_UNCLEAR', '点击后 ' + seconds + ' 秒按钮仍在加载，平台可能仍在处理；任务不会再次创建');
-    // 其余没有回到实例列表的情况立即核对实例列表：没有新实例就清除记录继续监测，不再等2分钟。
+    // 明确识别出的平台拒绝（失败提示、余额不足等弹窗、架构与 CUDA 不符）：立即两次核对实例列表，没有新实例就清除记录继续监测。
+    const arch = outcome.kind === 'dialog' && ARCH_DIALOG.test(outcome.message);
+    const known = outcome.kind === 'rejected' || arch || outcome.kind === 'dialog' && STRONG_FAILURE_TEXT.test(outcome.message);
+    if (known) return this.confirmNotCreated(t, quote, outcome.message, { archBlocked: arch });
+    // 其余情况（按钮仍在加载、没有识别出结果、未识别的弹窗）：请求可能仍在处理，保留提交记录，点击约 2 分钟后再读实例列表核对；
+    // 不立即判定“未创建”，避免实例延迟出现时被当成未创建、下一轮又点一次而多租。
     if (outcome.kind !== 'accepted') {
-      const arch = outcome.kind === 'dialog' && ARCH_DIALOG.test(outcome.message);
-      const known = outcome.kind === 'rejected' || arch || outcome.kind === 'dialog' && STRONG_FAILURE_TEXT.test(outcome.message);
-      const seen = outcome.kind === 'unknown' ? '点击后 ' + seconds + ' 秒内页面没有回到实例列表，也没有识别出失败提示'
-        + (outcome.others?.length ? '（新出现：' + outcome.others.join('；').slice(0, 160) + '）' : '（页面上没有新出现的提示）')
-        : outcome.kind === 'dialog' && !known ? '点击后出现未识别的弹窗：' + outcome.message.slice(0, 80) : outcome.message;
-      return this.confirmNotCreated(t, quote, seen, { recognized: known, archBlocked: arch });
+      this.prepared = null;
+      const seen = outcome.kind === 'dialog' ? '点击后出现未识别的弹窗：' + redact(outcome.message).slice(0, 80)
+        : outcome.busy ? '点击后 ' + seconds + ' 秒按钮仍在加载，平台可能仍在处理'
+        : '点击后 ' + seconds + ' 秒内页面没有回到实例列表，也没有识别出失败提示' + (outcome.others?.length ? '（新出现：' + redact(outcome.others.join('；')).slice(0, 160) + '）' : '（页面上没有新出现的提示）');
+      fail('SUBMIT_UNCLEAR', seen + '；保留提交记录，约 2 分钟后只读核对实例列表，任务不会再次创建');
     }
     this.prepared = null;
-    const acceptedAt = Date.now();
-    const instances = await this.scanInstances(t.config.gpuModel);
-    const candidates = this.newTargets(instances,t);
-    // 页面已确认跳回实例列表，且仅有一个位于指定主机的精确匹配新增实例时，自动绑定。
-    // 断网/重启导致点击结果不明、缺少主机号或出现多个候选时，必须人工核对。
-    const instanceId = candidates.length === 1 ? candidates[0].id : null;
-    return { acceptedAt, instanceId, evidence: instanceId ? 'unique-new-instance-on-selected-host' : 'accepted-navigation-only' };
+    // 页面已跳回实例列表：平台已受理。之后读取实例列表失败也保留“已受理”，不会被当成结果不明而在之后判为未创建。
+    const receipt = { acceptedAt: Date.now(), instanceId: null, evidence: 'accepted-navigation-only' };
+    try {
+      const instances = await this.scanInstances(t.config.gpuModel);
+      // 仅有一个位于指定主机的精确匹配新增实例时自动绑定；缺少主机号或出现多个候选时必须人工核对。
+      const candidates = this.newTargets(instances, t);
+      if (candidates.length === 1) Object.assign(receipt, { instanceId: candidates[0].id, evidence: 'unique-new-instance-on-selected-host', lateIds: this.strays(t, instances, candidates[0].id) });
+    } catch {}
+    return receipt;
   }
   // 点击后的页面结果：回到实例列表=已受理；表单页新出现失败提示=平台拒绝；新弹窗或超时=不明。
   // 点击前用 markClickSignals 标记已显示的元素，之后只把新出现的当作本次结果。
@@ -963,28 +1017,29 @@ export class AutoDLBrowserAdapter {
     const accepted = () => { try { const url = new URL(this.page.url()); return url.href !== formUrl && /^\/console\/instance(?:\/|$)/.test(url.pathname); } catch { return false; } };
     let last = { others: [], button: null, path: '' };
     // 按钮仍在加载时继续等到 clickLoadingMs：AutoDL 下单后会每秒查一次实例，最长约1分钟，成功跳回实例列表、失败给出提示。
-    const started = Date.now();
+    // 按钮仍在加载时出现的失败提示不立即当作结果（请求可能还没返回），等加载结束再判断。
+    const started = Date.now(), busy = s => s.button?.loading === true;
     for (let deadline = started + this.clickOutcomeMs; ; await sleep(this.clickPollMs)) {
       if (accepted()) return { kind: 'accepted' };
       const now = await this.clickSignals(), toast = now.toasts[0], dialog = now.dialogs[0];
       if (now.others?.length || now.button || now.path) last = { others: now.others?.length ? now.others : last.others, button: now.button, path: now.path };
       if (dialog) return { kind: 'dialog', message: dialog };
-      if (toast) {
+      if (toast && !(busy(now) && Date.now() < started + this.clickLoadingMs)) {
         // 报错后再观察片刻：若页面仍跳回实例列表，按已受理处理。
         for (const grace = Date.now() + this.rejectGraceMs; Date.now() < grace; await sleep(this.clickPollMs)) if (accepted()) return { kind: 'accepted' };
-        return { kind: 'rejected', message: toast };
+        return busy(now) ? { kind: 'unknown', others: [toast], busy: true, path: now.path, waitedMs: Date.now() - started } : { kind: 'rejected', message: toast };
       }
       if (Date.now() >= deadline) {
-        if (now.button?.loading === true && Date.now() < started + this.clickLoadingMs) { deadline = started + this.clickLoadingMs; continue; }
+        if (busy(now) && Date.now() < started + this.clickLoadingMs) { deadline = started + this.clickLoadingMs; continue; }
         break;
       }
     }
-    // busy：等满上限后按钮仍在加载，请求可能还没有返回，不能马上认定未创建。
-    return accepted() ? { kind: 'accepted' } : { kind: 'unknown', others: last.others, busy: last.button?.loading === true, path: last.path, waitedMs: Date.now() - started };
+    // busy：等满上限后按钮仍在加载（或已禁用），请求可能还没有返回，不能马上认定未创建。
+    return accepted() ? { kind: 'accepted' } : { kind: 'unknown', others: last.others, busy: last.button?.loading === true || last.button?.disabled === true, path: last.path, waitedMs: Date.now() - started };
   }
-  // 点击后没有回到实例列表：间隔两次读取完整实例列表核对。都没有提交前基线之外的实例才认定未创建；
-  // 目标主机上恰好出现一个与配置相符的新实例则按已受理绑定；其余情况保留提交记录交给后续核对。
-  async confirmNotCreated(t, quote, message, { recognized = true, archBlocked = false } = {}) {
+  // 平台已明确拒绝：间隔两次读取完整实例列表核对。都没有提交前基线之外的实例才认定未创建。
+  // 出现了基线之外的实例时不自动绑定（拒绝之后出现的新实例可能属于别的任务或手动创建），保留提交记录交给用户核对。
+  async confirmNotCreated(t, quote, message, { archBlocked = false } = {}) {
     this.prepared = null;
     const baseline = new Set(quote.baselineIds || []), shown = redact(message).slice(0, 160);
     for (let pass = 0; pass < 2; pass++) {
@@ -994,41 +1049,44 @@ export class AutoDLBrowserAdapter {
         try { rows = await this.instances(t.config.gpuModel); break; }
         catch (error) { if (error.code !== 'LIST_LOADING' || attempt >= 2) throw error; await sleep(1500); }
       }
-      const extra = rows.filter(i => !baseline.has(i.id)), mine = this.newTargets(rows, t);
-      if (mine.length === 1) return { acceptedAt: Date.now(), instanceId: mine[0].id, evidence: 'unique-new-instance-on-selected-host-after-click' };
-      if (extra.length) fail('SUBMIT_UNCLEAR', (recognized ? '平台提示“' + shown + '”，但' : shown + '；') + '实例列表出现提交前没有的实例 ' + extra.map(i => i.id).slice(0, 3).join('、') + '；任务不会再次创建');
+      const extra = rows.filter(i => isNew(i, baseline)).map(i => freshId(i, baseline));
+      if (extra.length) fail('SUBMIT_UNCLEAR', '平台提示“' + shown + '”，但实例列表出现提交前没有的实例 ' + extra.slice(0, 3).join('、')
+        + '；不自动绑定（可能属于别的任务或手动创建），请核对后绑定。任务不会再次创建', { noAutoBind: true });
     }
     const account = ACCOUNT_PROBLEM.test(message);
     // 架构与 CUDA 不匹配：换主机也不会成功，停止并说明，不当作竞争失败反复点击。
     if (archBlocked) throw new AppError('CUDA_ARCH', 'AutoDL 提示：“' + shown + '”。两次核对实例列表均无新实例，未产生实例；换主机也不会通过，已停止自动提交。请改选其他 GPU 型号或环境后再建任务',
       { notCreated: true });
-    throw new AppError('SUBMIT_REJECTED', (recognized ? '平台拒绝创建：“' + shown + '”' : shown) + '；两次核对实例列表均无新实例，未产生实例' + (account ? '。请处理账户问题后恢复任务' : '，继续监测'),
-      { notCreated: true, race: !account, unrecognized: !recognized });
+    throw new AppError('SUBMIT_REJECTED', '平台拒绝创建：“' + shown + '”；两次核对实例列表均无新实例，未产生实例' + (account ? '。请处理账户问题后恢复任务' : '，继续监测'),
+      { notCreated: true, race: !account });
   }
   verifyIdentity(instance,t) {
     return instance && instance.region && t.config.regions.includes(instance.region)
       && gpuKey(instance.gpuModel) === gpuKey(t.config.gpuModel) && instance.gpuCount === t.config.gpuCount
       && instance.id !== t.config.sourceId;
   }
+  // 本次提交的候选：提交前基线之外、与任务相符、位于所选主机（地区与主机号都要一致）、不是别的任务已绑定的实例。
   newTargets(instances,t) {
-    const number = t.operation?.quote?.host?.number;
-    if (!number || !Array.isArray(t.operation?.baselineIds)) return [];
-    return instances.filter(i=>!t.operation.baselineIds.includes(i.id) && this.verifyIdentity(i,t) && i.hostNumber === number);
+    const host = t.operation?.quote?.host;
+    if (!host?.number || !Array.isArray(t.operation?.baselineIds)) return [];
+    const baseline = new Set(t.operation.baselineIds), claimed = this.claimedIds(t);
+    return instances.filter(i => isNew(i, baseline)).map(i => ({ ...i, id: freshId(i, baseline) }))
+      .filter(i => this.verifyIdentity(i,t) && i.hostNumber === host.number && (!host.region || i.region === host.region) && !claimed.has(i.id));
   }
   async reconcile(t) {
     if (t.operation.stage === 'click_started' && !t.operation.receipt?.instanceId) return this.reconcileUnclear(t);
     const instances = await this.instances(t.config.gpuModel);
     const id = t.operation.receipt?.instanceId;
     if (id) {
-      const instance = instances.find(i=>i.id===id);
+      const found = instances.find(i => hasId(i, id)), instance = found && { ...found, id };
       if (!instance && Date.now() - t.operation.receipt.acceptedAt < 90000) return {pending:true,reason:'等待平台实例列表显示已绑定的目标实例'};
       if (!this.verifyIdentity(instance,t)) return {ambiguous:true,reason:'已绑定目标实例' + identityProblem(instance, t) + '，请到 AutoDL 核对'};
-      return {instance:{...instance,gpuVerified:true}};
+      return {instance:{...instance,gpuVerified:true}, lateIds: this.strays(t, instances, id)};
     }
     const candidates = this.newTargets(instances,t);
     if (t.operation.stage === 'accepted' && t.operation.receipt?.acceptedAt && candidates.length === 1) {
       return { receipt:{...t.operation.receipt,instanceId:candidates[0].id,evidence:'unique-new-instance-on-selected-host'},
-        instance:{...candidates[0],gpuVerified:true} };
+        instance:{...candidates[0],gpuVerified:true}, lateIds: this.strays(t, instances, candidates[0].id) };
     }
     if (t.operation.stage === 'accepted' && t.operation.receipt?.acceptedAt && candidates.length === 0 && Date.now() - t.operation.receipt.acceptedAt < 90000) {
       return {pending:true,reason:'创建页面已返回，等待目标实例出现在平台列表；不会再次提交'};
@@ -1045,17 +1103,18 @@ export class AutoDLBrowserAdapter {
     if (Date.now() - (op.clickedAt || op.at) < 2 * 60000) return { pending: true, reason: '点击结果暂不明确，约 2 分钟后自动核对实例列表；不会再次创建' };
     const baseline = new Set(op.baselineIds || []);
     let rows = await this.instances(t.config.gpuModel);
-    if (!rows.some(i => !baseline.has(i.id))) { await sleep(this.rejectRecheckMs); rows = await this.instances(t.config.gpuModel); }
-    const extra = rows.filter(i => !baseline.has(i.id)), mine = this.newTargets(rows, t);
+    if (!rows.some(i => isNew(i, baseline))) { await sleep(this.rejectRecheckMs); rows = await this.instances(t.config.gpuModel); }
+    const extra = rows.filter(i => isNew(i, baseline)).map(i => freshId(i, baseline)), mine = this.newTargets(rows, t);
     if (!extra.length) return { notCreated: true, reason: '点击结果不明，自动核对：完整实例列表两次都只有点击前已有的实例，确认未创建' };
-    if (mine.length === 1) return { receipt: { acceptedAt: op.at, instanceId: mine[0].id, evidence: 'unique-new-instance-on-selected-host-after-unclear-click' },
-      instance: { ...mine[0], gpuVerified: true } };
-    return { ambiguous: true, reason: '点击结果不明，实例列表出现提交前没有的实例 ' + extra.map(i => i.id).slice(0, 3).join('、')
-      + (mine.length > 1 ? '，其中有多个与本次配置相符' : '，但无法确认哪个属于本次提交') + '；请核对后绑定目标实例。此任务不会再次创建' };
+    // 平台曾明确拒绝本次点击（noAutoBind）：之后出现的新实例不自动绑定，交给用户核对。
+    if (mine.length === 1 && !op.noAutoBind) return { receipt: { acceptedAt: op.at, instanceId: mine[0].id, evidence: 'unique-new-instance-on-selected-host-after-unclear-click' },
+      instance: { ...mine[0], gpuVerified: true }, lateIds: this.strays(t, rows, mine[0].id) };
+    return { ambiguous: true, reason: '点击结果不明，实例列表出现提交前没有的实例 ' + extra.slice(0, 3).join('、')
+      + (op.noAutoBind ? '，但平台曾提示拒绝创建，可能属于别的任务或手动创建' : mine.length > 1 ? '，其中有多个与本次配置相符' : '，但无法确认哪个属于本次提交') + '；请核对后绑定目标实例。此任务不会再次创建' };
   }
   async attach(t,id) {
     if (!/^[a-z0-9]+-[a-z0-9]+$/i.test(id)) fail('INSTANCE','实例 ID 格式不正确');
-    const instance = (await this.instances(t.config.gpuModel)).find(i=>i.id===id);
+    const found = (await this.instances(t.config.gpuModel)).find(i => hasId(i, id)), instance = found && { ...found, id };
     if (!this.verifyIdentity(instance,t)) fail('INSTANCE','目标实例的地区/精确 GPU 型号/数量不匹配，或选中了源实例');
     if ((t.operation.baselineIds || []).includes(id)) fail('INSTANCE','目标实例已存在于提交前基线，请避免将原有实例错误绑定为此次新实例');
     return {instanceId:id,acceptedAt:t.operation.at,manual:true};
@@ -1064,7 +1123,7 @@ export class AutoDLBrowserAdapter {
   async recheckSubmission(t) {
     const baseline = new Set(t.operation.baselineIds || []);
     const rows = await this.instances(t.config.gpuModel);
-    return { extra: rows.filter(i => !baseline.has(i.id)).map(i => ({ id: i.id, region: i.region, gpuModel: i.gpuModel, gpuCount: i.gpuCount })) };
+    return { extra: rows.filter(i => isNew(i, baseline)).map(i => ({ id: freshId(i, baseline), region: i.region, gpuModel: i.gpuModel, gpuCount: i.gpuCount })) };
   }
   async logout() {
     // 仅允许清理本项目的专用资料目录，不能触及系统默认浏览器或运行目录其他文件。

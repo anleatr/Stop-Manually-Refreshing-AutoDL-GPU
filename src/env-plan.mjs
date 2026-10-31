@@ -122,18 +122,18 @@ function hits(text, rules) {
 const cudaTag = d => d.length === 3 ? d.slice(0, 2) + '.' + d[2] : d[0] + '.' + d[1];
 const OP = '[<>=!~≥≤]=?\\s*\\d+(?:\\.\\d+){0,3}(?:\\.\\*)?';
 const SPEC = '(' + OP + '(?:\\s*,\\s*' + OP + ')*)';
-const QUAL = '\\s*(?:及以上|以上|或更高|或以上|\\+(?!cu)|\\s+(?:or|and)\\s+(?:higher|later|above|newer))';
+const QUAL = '\\s{0,8}(?:及以上|以上|或更高|或以上|\\+(?!cu)|\\s{1,8}(?:or|and)\\s{1,8}(?:higher|later|above|newer))';
 const LEAD = '(?:^|[\\s"\'\\[(,`])';
 const TORCH_RULES = [
   [new RegExp(LEAD + '(?:torch|pytorch)\\s*' + SPEC, 'gim'), m => m[1]],
   [/\btorch\s+(\d+\.\d+(?:\.\d+)?)\+cu\d{2,3}/gi, m => '==' + m[1]],
-  [/^\s*torch\s+(\d+\.\d+(?:\.\d+)?)\s*$/gim, m => '==' + m[1]],
-  [new RegExp('\\b(?:PyTorch|torch)\\s*(?:版本)?\\s*(\\d+\\.\\d+(?:\\.\\d+)?)' + QUAL, 'gi'), m => '>=' + m[1]],
+  [/^[ \t]*torch[ \t]+(\d+\.\d+(?:\.\d+)?)[ \t]*$/gim, m => '==' + m[1]],
+  [new RegExp('\\b(?:PyTorch|torch)\\s{0,8}(?:版本)?\\s{0,8}(\\d+\\.\\d+(?:\\.\\d+)?)' + QUAL, 'gi'), m => '>=' + m[1]],
 ];
 const PY_RULES = [
   [new RegExp(LEAD + 'python\\s*' + SPEC, 'gim'), m => m[1]],
   [new RegExp('(?:python_requires|requires-python)\\s*=\\s*["\']\\s*' + SPEC, 'gi'), m => m[1]],
-  [new RegExp('\\bPython\\s*(?:版本)?\\s*(3\\.\\d{1,2})' + QUAL, 'gi'), m => '>=' + m[1]],
+  [new RegExp('\\bPython\\s{0,8}(?:版本)?\\s{0,8}(3\\.\\d{1,2})' + QUAL, 'gi'), m => '>=' + m[1]],
   [/\bPython\s*(3\.\d{1,2})\s*[-–~至到]\s*(3\.\d{1,2})\b/gi, m => '>=' + m[1] + ',<' + nextPin(m[2])],
 ];
 const CUDA_RULES = [
@@ -141,15 +141,15 @@ const CUDA_RULES = [
   [/download\.pytorch\.org\/whl\/cu(\d{2,3})\b/gi, m => '==' + cudaTag(m[1])],
   [new RegExp('(?:pytorch-cuda|cudatoolkit|cuda-toolkit|cuda-version)\\s*' + SPEC, 'gi'), m => m[1]],
   [/nvidia\/cuda:(\d{1,2}\.\d)(?:\.\d+)?/gi, m => '==' + m[1]],
-  [new RegExp('\\bCUDA\\s*(?:版本)?\\s*(1\\d\\.\\d)' + QUAL, 'gi'), m => '>=' + m[1]],
+  [new RegExp('\\bCUDA\\s{0,8}(?:版本)?\\s{0,8}(1\\d\\.\\d)' + QUAL, 'gi'), m => '>=' + m[1]],
   [new RegExp('\\bCUDA\\s*' + SPEC, 'gi'), m => m[1]],
 ];
 const GB = '(\\d{1,3}(?:\\.\\d{1,2})?)\\s*(?:GB|GiB|G\\b)';
 const VRAM_RULES = [
   [new RegExp('(?:显存|GPU\\s*内存|显卡内存)[^\\n]{0,12}?(?:至少|不低于|不少于|大于|需要|需|约|大约|大概|>=|≥)\\s*' + GB, 'gi'), m => m[1]],
   [new RegExp('(?:至少|不低于|不少于|需要|需|约|大约|大概)[^\\n]{0,6}?' + GB + '[^\\n]{0,4}?(?:以上的)?\\s*(?:显存|GPU\\s*内存)', 'gi'), m => m[1]],
-  [new RegExp('(?:at\\s+least|minimum(?:\\s+of)?|requires?(?:\\s+(?:about|around|approximately|roughly))?|needs?(?:\\s+(?:about|around))?)\\s*~?\\s*' + GB + '\\s*(?:of\\s+)?(?:GPU\\s+memory|VRAM|video\\s+memory)', 'gi'), m => m[1]],
-  [new RegExp('(?:VRAM|显存)\\s*[:：]\\s*(?:>=|≥)?\\s*' + GB, 'gi'), m => m[1]],
+  [new RegExp('(?:at\\s+least|minimum(?:\\s+of)?|requires?(?:\\s+(?:about|around|approximately|roughly))?|needs?(?:\\s+(?:about|around))?)\\s{0,8}~?\\s{0,8}' + GB + '\\s{0,8}(?:of\\s+)?(?:GPU\\s+memory|VRAM|video\\s+memory)', 'gi'), m => m[1]],
+  [new RegExp('(?:VRAM|显存)\\s{0,8}[:：]\\s{0,8}(?:>=|≥)?\\s{0,8}' + GB, 'gi'), m => m[1]],
 ];
 const COUNT_RULES = [
   [/--nproc[_-]per[_-]node[=\s]+(\d{1,2})\b/gi, m => m[1]],
@@ -157,7 +157,7 @@ const COUNT_RULES = [
   [/CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)/g, m => String(m[1].split(',').length)],
 ];
 const FEATURE_RULES = [
-  ['flash-attn', /pip\s+install[^\n]*\bflash[-_]attn\b|^\s*flash[-_]attn\b|\bimport\s+flash_attn\b|\bfrom\s+flash_attn\b|attn_implementation\s*=\s*["']flash_attention_2/im],
+  ['flash-attn', /pip\s+install[^\n]*\bflash[-_]attn\b|^[ \t]*flash[-_]attn\b|\bimport\s+flash_attn\b|\bfrom\s+flash_attn\b|attn_implementation\s*=\s*["']flash_attention_2/im],
   ['bf16', /--bf16(?![\w-])|\bbf16\s*[:=]\s*(?:true|1)\b|torch_dtype\s*=\s*(?:torch\.)?bfloat16/i],
   ['fp8', /\btransformer[-_]engine\b|--fp8(?![\w-])|\bfp8\s*[:=]\s*(?:true|1)\b/i],
 ];
@@ -226,7 +226,7 @@ export function sizeEstimate(text, request = '') {
   // 量化底座上的参数高效微调（如“INT4 量化下做 P-Tuning”）按 QLoRA 估算
   const quantBits = /int4|4[\s-]?bit|4\s*比特|nf4/i.test(hint) ? '4' : /int8|8[\s-]?bit|8\s*比特/i.test(hint) ? '8' : '';
   if (task === 'lora' && quantBits) task = 'qlora';
-  const p = size.value, base = { paramsB: p, evidence: [size.evidence], source: 'estimate', task };
+  const p = size.value, base = { paramsB: p, evidence: [size.evidence], source: 'estimate', task, ...(own.length ? { fromRequest: true } : {}) };
   if (task === 'infer') {
     const [bytes, prec] = (PRECISION.find(([, , re]) => re.test(hint)) || [2, 'FP16/BF16']).slice(0, 2);
     const gb = v => Math.ceil(p * v * 1.2);
@@ -239,12 +239,34 @@ export function sizeEstimate(text, request = '') {
   return { ...base, totalGB: total, label: '微调 · ' + table.label, note: task === 'lora' && !/lora|freeze/i.test(hint) ? '未写明微调方式，按 LoRA 估算；全参数微调需要的显存多得多' : '',
     formula: 'LLaMA-Factory 估算表：' + col + 'B ' + table.label + ' ' + table[col] + 'GB' + (col === p ? '' : '，按 ' + p + 'B 等比换算 ≈ ' + total + 'GB') };
 }
+// 资料写明的显存数字是否说的是用户要跑的那个模型：applies（同一大小）、other（只写了别的大小）、mixed（同一句里有几种大小）、
+// nosize（没写模型大小）、uncovered（资料里有多个模型大小，写明的数字没提到最大的那个）。
+const sameSize = (a, b) => Math.abs(a - b) <= Math.max(a, b) * 0.05;
+function vramFit(c) {
+  const s = c.size, lines = c.vramGB?.evidence || [];
+  const near = [...new Set(lines.flatMap(l => paramSizes(String(l)).map(x => x.value)))];
+  if (s && !s.ambiguous && s.fromRequest) {
+    const hit = near.some(x => sameSize(x, s.paramsB));
+    return !near.length ? 'nosize' : !hit ? 'other' : near.every(x => sameSize(x, s.paramsB)) ? 'applies' : 'mixed';
+  }
+  if (s?.ambiguous) {
+    const top = Math.max(...s.candidates.map(parseFloat));
+    if (!near.some(x => sameSize(x, top))) return 'uncovered';
+  }
+  return 'applies';
+}
 // 本次判断用的单卡显存要求：资料写明的值优先；资料中有多个值时取最大的（保守）；都没有时用参数量估算（多卡平分）。
+// 写明的数字说的是别的模型大小时改用估算；说不清是哪个模型且估算更大时，介于两者之间的卡标为有风险（warnUntil）。
 export function vramNeed(c, gpuCount = 1) {
-  if (c.vramGB && !c.vramGB.ambiguous) return { gb: c.vramGB.value, basis: 'stated' };
-  if (c.vramGB?.ambiguous && c.vramGB.candidates?.length) return { gb: Math.max(...c.vramGB.candidates), basis: 'max' };
-  if (c.size && !c.size.ambiguous && c.size.totalGB) return { gb: Math.ceil(c.size.totalGB / Math.max(1, gpuCount)), basis: 'estimate' };
-  return null;
+  const est = c.size && !c.size.ambiguous && c.size.totalGB ? Math.ceil(c.size.totalGB / Math.max(1, gpuCount)) : null;
+  const stated = !c.vramGB ? null : !c.vramGB.ambiguous ? { gb: c.vramGB.value, basis: 'stated' }
+    : c.vramGB.candidates?.length ? { gb: Math.max(...c.vramGB.candidates), basis: 'max' } : null;
+  if (!stated) return est ? { gb: est, basis: 'estimate' } : null;
+  const fit = vramFit(c);
+  if (fit === 'other' && est) return { gb: est, basis: 'estimate', ignoredGB: stated.gb };
+  if ((fit === 'nosize' || fit === 'mixed') && est > stated.gb) return { ...stated, warnUntil: est };
+  if (fit === 'uncovered') return { ...stated, uncovered: Math.max(...c.size.candidates.map(parseFloat)) };
+  return stated;
 }
 export function extractConstraints(input, { request = '' } = {}) {
   const text = String(input ?? '').slice(0, PLAN_TEXT_LIMIT);
@@ -268,9 +290,16 @@ const FRAMEWORKS = { pytorch: 'PyTorch', torch: 'PyTorch', tensorflow: 'TensorFl
 const FRAMEWORK_WORDS = { PyTorch: /torch/i, TensorFlow: /tensorflow/i, PaddlePaddle: /paddle/i, JAX: /\bjax\b/i };
 const FEATURE_WORDS = { 'flash-attn': /flash[\s_-]?att/i, bf16: /bf16|bfloat16/i, fp8: /fp8|transformer[-_\s]?engine/i };
 const squash = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+// 版本号按完整数字比较：2.1 不匹配 2.10、12.1，可匹配 2.1.0；CUDA 也认 cu121 这种写法。
+const reEscape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const hasVersion = (text, v, cuda) => new RegExp('(?<![\\d.])' + reEscape(v) + '(?!\\d)').test(text)
+  || (cuda && new RegExp('cu' + v.replace('.', '') + '(?!\\d)', 'i').test(text));
+// 显存数字必须紧跟 GB/GiB/G；卡数不能是版本号、参数量（7B）或显存（8GB）的一部分。
+const VRAM_NUM = /(?<![\d.])(\d+(?:\.\d+)?)\s*(?:GB|GiB|G)(?![A-Za-z])/gi;
+const COUNT_NUM = /(?<![\d.])(\d{1,2})(?![\d.]|\s*(?:GB|GiB|G\b|[bB]\b))/g;
 export function checkModelItems(items, sourceText) {
-  const source = squash(sourceText), accepted = [], rejected = [];
-  for (const item of (Array.isArray(items) ? items : []).slice(0, 12)) {
+  const source = squash(sourceText), accepted = [], rejected = [], list = Array.isArray(items) ? items : [];
+  for (const item of list.slice(0, 12)) {
     const field = String(item?.field ?? ''), raw = squash(item?.value).slice(0, 80), evidence = squash(item?.evidence).slice(0, 300);
     const reject = reason => rejected.push({ field, value: raw, evidence, reason });
     if (!MODEL_FIELDS.includes(field)) { reject('不在允许的字段内'); continue; }
@@ -279,13 +308,13 @@ export function checkModelItems(items, sourceText) {
       const spec = parseSpec(normalizeSpecText(/^[\d.]+$/.test(raw) ? '==' + raw : raw));
       if (!spec) { reject('版本条件格式无效'); continue; }
       const digits = spec.map(([, v]) => v), compact = evidence.replace(/\s+/g, '');
-      if (!digits.every(v => compact.includes(v) || (field === 'cuda' && compact.toLowerCase().includes('cu' + v.replace('.', ''))))) { reject('引用中没有该版本号'); continue; }
+      if (!digits.every(v => hasVersion(compact, v, field === 'cuda'))) { reject('引用中没有该版本号'); continue; }
       accepted.push({ field, spec, evidence });
     } else if (field === 'vramGB' || field === 'gpuCount') {
       const n = Number(raw.replace(/\s*(?:GB|GiB|G|张|卡|块)$/i, ''));
-      if (!Number.isFinite(n) || n <= 0 || n > (field === 'vramGB' ? 2000 : 64) || (field === 'gpuCount' && !Number.isInteger(n))) { reject('数值无效'); continue; }
-      const seen = [...evidence.matchAll(/\d+(?:\.\d+)?/g)].map(m => Number(m[0]));
-      if (!seen.some(x => Math.abs(x - n) <= 0.5 || Math.ceil(x) === n)) { reject('引用中没有该数值'); continue; }
+      if (!Number.isFinite(n) || n < 1 || n > (field === 'vramGB' ? 2000 : 64) || (field === 'gpuCount' && !Number.isInteger(n))) { reject('数值无效'); continue; }
+      const seen = [...evidence.matchAll(field === 'vramGB' ? VRAM_NUM : COUNT_NUM)].map(m => Number(m[1]));
+      if (!seen.some(x => field === 'vramGB' ? Math.abs(x - n) <= 0.5 || Math.ceil(x) === n : x === n)) { reject('引用中没有该数值'); continue; }
       accepted.push({ field, value: n, evidence });
     } else if (field === 'framework') {
       const name = FRAMEWORKS[raw.toLowerCase().replace(/[\s_-]/g, '')];
@@ -297,6 +326,7 @@ export function checkModelItems(items, sourceText) {
       accepted.push({ field: 'feature', value: key, evidence });
     }
   }
+  if (list.length > 12) rejected.push({ field: '其余条目', value: String(list.length - 12) + ' 条', evidence: '', reason: '超过 12 条的部分未核对，已丢弃' });
   return { accepted, rejected };
 }
 // 合并：依赖文件里的版本、框架以规则为准，模型只填空；显存与卡数取决于用户要跑什么，引用核对通过时以模型为准，并记下规则读到的值。
@@ -310,6 +340,12 @@ export function mergeConstraints(rules, accepted = []) {
       else if (!sameSpec(rule.spec, item.spec)) rule.note = [rule.note, '模型读到 ' + formatSpec(item.spec) + '，以依赖文件为准'].filter(Boolean).join('；');
     } else if (item.field === 'vramGB' || item.field === 'gpuCount') {
       const rule = merged[item.field];
+      // 规则读到一个明确的显存数字时，模型只能调高，不能调低：防止模型读错或资料中夹带的文字把显存不够的卡放进来。
+      // 例外：规则读到的那句说的是别的模型大小（或同一句里有几种大小）。
+      if (item.field === 'vramGB' && rule?.source === 'rule' && !rule.ambiguous && item.value < rule.value && !['other', 'mixed'].includes(vramFit(merged))) {
+        rule.note = [rule.note, '模型读到较低的 ' + item.value + 'GB，以资料写明的 ' + rule.value + 'GB 为准'].filter(Boolean).join('；');
+        continue;
+      }
       const note = !rule ? '' : rule.ambiguous ? '资料中另有 ' + rule.candidates.join('、') + '，按需求选用此值' : rule.value !== item.value ? '规则读到 ' + rule.value + '，按需求选用此值' : '';
       if (!rule || rule.value !== item.value) merged[item.field] = { ...model, value: item.value, ...(note ? { note } : {}) };
     } else if (item.field === 'framework') { if (!merged.framework) merged.framework = { ...model, value: item.value }; }
@@ -335,22 +371,27 @@ export function assessGpu(spec, c, gpuCount = 1) {
   // 显存要求未知时不能判“可用”：只能说明架构与版本上没有冲突，放不放得下要用户确认。
   const mem = vramNeed(c, gpuCount), basis = { stated: '所需', max: '资料中最大的', estimate: '估算所需' }[mem?.basis];
   if (!mem) flag('check', '显存要求未知（资料没写，也没有模型大小可估算），无法判断模型放不放得下');
-  else if (spec.vramGB === null) flag('check', '单卡显存未知（同名有多种版本），需在 AutoDL 页面核对是否 ≥ ' + mem.gb + 'GB');
+  else if (spec.vramGB === null) flag('check', '单卡显存未知（同名有多种版本），需在 AutoDL 页面核对是否 ≥ ' + (mem.warnUntil || mem.gb) + 'GB');
   else if (spec.vramGB < mem.gb) flag('excluded', '单卡显存 ' + spec.vramGB + 'GB，低于' + basis + ' ' + mem.gb + 'GB');
   else {
     reasons.push('单卡 ' + spec.vramGB + 'GB ≥ ' + basis + ' ' + mem.gb + 'GB');
+    // 写明的数字说不清是哪个模型、而按要跑的模型大小估算需要更多时，介于两者之间的卡标为有风险。
+    if (mem.warnUntil && spec.vramGB < mem.warnUntil) flag('warn', '按要跑的模型大小估算约需 ' + mem.warnUntil + 'GB；资料写的 ' + mem.gb + 'GB 可能对应别的模型或量化方式，需核对');
+    if (mem.uncovered) flag('warn', '资料中最大的模型是 ' + mem.uncovered + 'B，写明的显存要求没有提到它；若要跑它，需核对');
     // 显存要求来自模型补充时，结论依赖模型对原文的理解（可能读错行列或把可选模式当成要求），标为有风险并给出原文。
-    if (mem.basis === 'stated' && c.vramGB?.source === 'model') flag('warn', '显存要求来自模型补充，请核对原文：' + String(c.vramGB.evidence?.[0] || '').slice(0, 80));
+    if (mem.basis !== 'estimate' && c.vramGB?.source === 'model') flag('warn', '显存要求来自模型补充，请核对原文：' + String(c.vramGB.evidence?.[0] || '').slice(0, 80));
   }
   if (spec.sm === null) { flag('check', '未能从型号名识别 GPU 架构，需自行核对与 CUDA / PyTorch 的兼容性'); return { status, reasons }; }
   const name = spec.arch + '（sm_' + spec.sm + '）', need = ARCH_NEEDS[spec.sm];
   const torch = c.torch && !c.torch.ambiguous ? c.torch.spec : null, cuda = c.cuda && !c.cuda.ambiguous ? c.cuda.spec : null;
+  // 版本要求来自模型补充时在原因里注明，便于用户对照原文判断是否真的是要求
+  const byModel = f => f?.source === 'model' ? '（来自模型补充，请核对原文）' : '';
   if (need && cuda && excludesFrom(cuda, need.cuda)) flag(need.soft ? 'warn' : 'excluded', need.soft
-    ? name + '在 CUDA ' + need.cuda + ' 以下没有原生内核，只能靠 PTX 即时编译，需实测；资料要求 CUDA ' + formatSpec(cuda)
-    : name + '需要 CUDA ≥ ' + need.cuda + '，资料要求 CUDA ' + formatSpec(cuda));
+    ? name + '在 CUDA ' + need.cuda + ' 以下没有原生内核，只能靠 PTX 即时编译，需实测；资料要求 CUDA ' + formatSpec(cuda) + byModel(c.cuda)
+    : name + '需要 CUDA ≥ ' + need.cuda + '，资料要求 CUDA ' + formatSpec(cuda) + byModel(c.cuda));
   if (need && torch && excludesFrom(torch, need.torch)) flag(need.soft ? 'warn' : 'excluded', need.soft
-    ? name + '在 PyTorch ' + need.torch + ' 以下没有原生内核，需实测；资料要求 torch ' + formatSpec(torch)
-    : name + '需要 PyTorch ≥ ' + need.torch + '，资料要求 torch ' + formatSpec(torch));
+    ? name + '在 PyTorch ' + need.torch + ' 以下没有原生内核，需实测；资料要求 torch ' + formatSpec(torch) + byModel(c.torch)
+    : name + '需要 PyTorch ≥ ' + need.torch + '，资料要求 torch ' + formatSpec(torch) + byModel(c.torch));
   if (spec.sm < 75 && cuda && requiresAtLeast(cuda, '13.0')) flag('excluded', 'CUDA 13 已不支持 ' + name);
   else if (spec.sm < 75 && cuda && requiresAtLeast(cuda, '12.8') && (c.framework?.value || 'PyTorch') === 'PyTorch')
     flag('warn', 'PyTorch 的 CUDA 12.8 及以上构建已不含 ' + name + ' 的内核，需使用 cu126 及以下构建，需核对');
@@ -436,22 +477,24 @@ export function setupCommands(c) {
 }
 const LABELS = { framework: '框架', torch: 'PyTorch', python: 'Python', cuda: 'CUDA（镜像 / PyTorch 构建）', vramGB: '单卡显存', gpuCount: '资料中的卡数（仅供参考）', archList: '源环境支持的 GPU 架构' };
 export function constraintRows(c, gpuCount = 1) {
-  const rows = [];
+  const rows = [], mem = vramNeed(c, gpuCount);
   for (const key of Object.keys(LABELS)) {
     const f = c[key];
     if (!f) continue;
     const value = f.spec ? formatSpec(f.spec) : Array.isArray(f.value) ? f.value.join(' ') : f.value !== undefined ? (key === 'vramGB' ? '≥ ' + f.value + 'GB' : String(f.value))
       : '多个候选：' + (f.candidates || []).join('、');
-    const note = key === 'vramGB' && f.ambiguous ? [f.note, '选卡按其中最大的 ' + Math.max(...(f.candidates || [0])) + 'GB 判断；写明要跑哪个模型可更准'].filter(Boolean).join('；') : f.note || '';
+    const note = key === 'vramGB' && f.ambiguous ? [f.note, '选卡按其中最大的 ' + Math.max(...(f.candidates || [0])) + 'GB 判断；写明要跑哪个模型可更准'].filter(Boolean).join('；')
+      : key === 'vramGB' && mem?.ignoredGB ? [f.note, '这句说的是别的模型大小，选卡没有采用，改按要跑的模型估算'].filter(Boolean).join('；') : f.note || '';
     rows.push({ key, label: LABELS[key], value, source: f.source, evidence: f.evidence || [], ambiguous: !!f.ambiguous, note });
   }
-  const s = c.size, mem = vramNeed(c, gpuCount);
+  const s = c.size;
   if (s?.ambiguous) rows.push({ key: 'size', label: '模型大小', value: '多个候选：' + s.candidates.join('、'), source: 'estimate', evidence: s.evidence, ambiguous: true, note: s.note });
   else if (s) {
     const used = mem?.basis === 'estimate', per = Math.ceil(s.totalGB / Math.max(1, gpuCount));
     rows.push({ key: 'size', label: '显存估算（按模型大小）', value: s.paramsB + 'B · ' + s.label + ' · 约 ' + s.totalGB + 'GB' + (gpuCount > 1 ? '，' + gpuCount + ' 卡平分每卡约 ' + per + 'GB' : ''),
       source: 'estimate', evidence: s.evidence, ambiguous: false,
-      note: [s.formula, s.note, used ? (gpuCount > 1 ? '多卡需框架支持张量或流水线并行' : '') : '资料写明了显存要求，以资料为准'].filter(Boolean).join('；') });
+      note: [s.formula, s.note, used ? (gpuCount > 1 ? '多卡需框架支持张量或流水线并行' : '')
+        : mem?.warnUntil ? '资料写的 ' + mem.gb + 'GB 与估算不一致，介于两者之间的卡标为有风险' : '资料写明了显存要求，以资料为准'].filter(Boolean).join('；') });
   }
   for (const f of c.features || []) rows.push({ key: 'feature', label: '特性', value: f.value, source: f.source, evidence: f.evidence || [], ambiguous: false, note: '' });
   return rows;
@@ -461,8 +504,11 @@ export function buildPlan(constraints, catalog, { gpuCount = 1 } = {}) {
   const top = gpus.find(g => g.status === 'ok' && g.enough) || gpus.find(g => g.status === 'ok') || gpus.find(g => g.status === 'warn') || null;
   const mem = vramNeed(constraints, gpuCount), notices = [];
   if (!mem) notices.push('没有读出显存要求，也没有模型大小可以估算，所以没有型号能判为“可用”。请在“你要做什么”里写明模型和大小（例如“推理 Qwen2.5-27B”“LoRA 微调 7B”，量化部署可写 int4），或粘贴写有显存要求的 README 段落。');
+  else if (mem.ignoredGB) notices.push('资料写的 ' + mem.ignoredGB + 'GB 说的是别的模型大小，与你要跑的 ' + constraints.size.paramsB + 'B 不符；改按模型大小估算为每卡约 ' + mem.gb + 'GB（' + constraints.size.label + '）。');
   else if (mem.basis === 'estimate') notices.push('资料没有写显存要求，按模型大小估算为每卡约 ' + mem.gb + 'GB（' + constraints.size.label + '）。估算不含长上下文与大批量，实际以实测为准。');
   else if (mem.basis === 'max') notices.push('资料中有多个显存数字，选卡按其中最大的 ' + mem.gb + 'GB 判断；写明要跑哪个模型，或勾选让 AI 按需求选择，可以更准。');
+  if (mem?.warnUntil) notices.push('资料写的 ' + mem.gb + 'GB 没说清对应哪个模型；按你要跑的模型大小估算约需 ' + mem.warnUntil + 'GB，显存介于两者之间的卡标为“有风险”。');
+  if (mem?.uncovered) notices.push('资料中最大的模型是 ' + mem.uncovered + 'B，写明的显存要求没有提到它；要跑它请在“你要做什么”里写明，可按模型大小估算。');
   return { constraints: constraintRows(constraints, gpuCount), gpus, notices, vramNeed: mem, catalogCheckedAt: catalog?.checkedAt || null, setupCommands: setupCommands(constraints),
     draft: top ? { gpuModel: top.model, gpuCount, status: top.status, regions: top.regions.filter(r => !r.disabled).map(r => r.region), imageHint: imageHint(constraints, top.model) } : null };
 }

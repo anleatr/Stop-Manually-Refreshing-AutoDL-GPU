@@ -123,3 +123,8 @@ test('租多卡时钱包余额（不含代金券）需大于 10 元：不足时�
   w.snapshot = { ...w.snapshot, balance: 20 }; await f.due(20000);
   assert.equal(f.task.balanceLow, null); assert.equal(f.submissions, 1);
 });
+test('日志脱敏覆盖 Bearer、JSON 中的 token 与 x-api-key 等常见写法', async () => {
+  const { redact } = await import('../src/errors.mjs');
+  for (const raw of ['Authorization: Bearer secret-value-123', '{"token":"secret-value-123"}', 'x-api-key: secret-value-123', 'token=secret-value-123', 'key sk-secretvalue123456'])
+    assert.equal(redact(raw).includes('secret'), false, raw);
+});

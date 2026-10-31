@@ -36,11 +36,14 @@ export function candidateReasons(host, config, source = null) {
   if (archCudaProblem(host.gpuModel, environmentCuda(config, source))) reasons.push('GPU 架构需要更高 CUDA');
   if (!Number.isFinite(host.price) || host.price <= 0 || (!officialPricing(config) && (host.price > config.maxGpuHourly || cents(host.price * config.gpuCount) > cents(config.maxTotalHourly)))) reasons.push('价格不符');
   const disk = requiredDiskGB(config, source);
-  if (!Number.isFinite(host.expandableGB) || host.expandableGB < disk) reasons.push('数据盘容量不足');
+  // 不需要扩容时不看可扩容容量：页面写法读不出也不排除这台主机。
+  if (disk > 0 && (!Number.isFinite(host.expandableGB) || host.expandableGB < disk)) reasons.push('数据盘容量不足');
   // 克隆只能在源实例所在地区；目标 GPU 型号和数量按任务设置，可以与源实例不同（AutoDL 克隆页允许更换主机）。
   if (source) {
     if (host.region !== source.region) reasons.push('不在源地区');
     if ((source.hostId && host.id === source.hostId) || (source.hostNumber && host.number === source.hostNumber)) reasons.push('源主机');
+    // 已知源主机号而这台主机读不出主机号：无法确认不是源主机，不选。
+    else if (source.hostNumber && !host.number) reasons.push('主机号未知，无法确认不是源主机');
   }
   return reasons;
 }
@@ -62,6 +65,8 @@ export function assessInstance(instance, mode, copyDataDisk = true) {
   const copying = mode === 'clone' && copyDataDisk;
   if ((copying && instance.copyFailed) || instance.failed) return { state: 'attention', reason: copying && instance.copyFailed ? '数据盘复制失败，请保留源实例并检查目标实例' : '实例创建或开机失败，请检查控制台' };
   if (copying && instance.copyComplete !== true) return { state: 'verifying', reason: '已分配实例，等待数据盘复制完成的明确证据' };
+  // 页面仍显示复制中时不算完成，即使同一行有“复制完成”字样。
+  if (copying && instance.progress === '数据盘复制中') return { state: 'verifying', reason: '数据盘仍在复制中，等待复制完成' };
   if (instance.running === true && instance.gpuVerified === true) return { state: 'completed', reason: mode === 'clone' ? (copying ? '数据盘复制完成，目标 GPU 实例已运行' : '系统盘克隆完成，目标 GPU 实例已运行（未复制数据盘）') : '目标 GPU 实例已运行' };
   return { state: 'verifying', reason: '等待目标 GPU 实例启动' };
 }

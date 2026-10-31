@@ -468,3 +468,12 @@ test('规划镜像接口只读官方菜单并逐级选择，会话不可用时�
   f.app.adapters.autodl.sessionStatus=()=>({state:'expired',browserOpen:true});
   assert.equal((await f.request('/api/plan/image',{hint:{}})).status,409);assert.equal(f.app.store.tasks().length,0);
 });
+test('控制台响应带 Cross-Origin-Opener-Policy；接管失效运行锁时锁文件已被别的进程改写就退出',async t=>{
+  const f=await localApp(t);const home=await fetch(f.base);assert.equal(home.headers.get('cross-origin-opener-policy'),'same-origin');await home.text();
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'autodl-lock-isolated-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const lockPath=path.join(dir,'server.lock');fs.writeFileSync(lockPath,'999999');
+  const original=fs.readFileSync;let reads=0;
+  fs.readFileSync=function(p,...rest){if(String(p)===lockPath&&++reads===2)return '424242';return original.call(this,p,...rest);};
+  try{assert.throws(()=>createApplication({runtimeDir:dir,startEngine:false}),/另一个进程接管/);}finally{fs.readFileSync=original;}
+  assert.equal(original(lockPath,'utf8'),'999999');
+});
