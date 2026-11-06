@@ -1,8 +1,8 @@
 # 更新日志
 
-每个版本改了什么。下载与发布页见 [Releases](https://github.com/cc2025cheng/Stop-Manually-Refreshing-AutoDL-GPU/releases)。
+每个版本改了什么。下载与发布页见 [Releases](https://github.com/anleatr/Stop-Manually-Refreshing-AutoDL-GPU/releases)。
 
-## 未发布
+## v0.3.0（2026-11-06）
 
 - 新增 Windows Electron 桌面入口、托盘运行和独立构建命令，固定桌面开发依赖及锁文件。
 - 用户配置集中管理账户、实例与余额，登录成功自动同步实例，常规余额自动刷新间隔为 10 分钟。

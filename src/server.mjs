@@ -19,6 +19,7 @@ import { AppError, redact, messageOf, fail } from './errors.mjs';
 import { assertLocalRequest } from './local-access.mjs';
 import { AutoDLBrowserAdapter } from './adapters/autodl.mjs';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // 启动时发现运行锁被占用：查询已在运行的后台属于哪种情况。令牌只用于本机停止请求，不返回、不打印。
 export async function inspectRunningBackend(port, { fetchImpl = fetch } = {}) {
   const base = 'http://127.0.0.1:' + port;
@@ -187,7 +188,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
     try {
       const host = assertLocalRequest(req);
       const url = new URL(req.url,`http://${host}`);
-      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:'0.2.1'});
+      if (url.pathname === '/api/health' && req.method === 'GET') return json(res,200,{ok:true,version:VERSION});
       if(url.pathname.startsWith('/api/')) {
         if(req.headers['x-local-token'] !== token) fail('TOKEN','本地访问令牌无效，请重新加载页面',{status:403});
         if(req.method === 'GET' && url.pathname === '/api/state') return json(res,200,{...store.publicState(),
