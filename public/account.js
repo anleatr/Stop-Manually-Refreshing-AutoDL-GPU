@@ -29,8 +29,8 @@ function renderPricing() {
   // 只突出单卡每小时；读到完整配置报价后，下方一行再写配置总价（多卡时注明卡数）与磁盘日费。
   $('#price-unit').textContent=unit;$('#price-hourly').textContent=money(quote?.hourly);$('#price-storage').textContent=money(quote?.storageDaily);
   $('#price-cards').textContent=quote&&quote.gpuCount>1?'（'+quote.gpuCount+' 卡）':'';$('#price-detail').hidden=!quote;
-  $('#price-status').textContent=accountBusy==='pricing'?'正在读取配置页面；不会提交租用。':pricingError?'读取失败：'+pricingError:expired?'报价已过期，请重新读取。':quote?'已读取 '+quote.region+' 当前配置报价；提交时会再次核对。':snapshot?pricingWaitMessage(snapshot):'选好配置后读取报价；真实价格来自 AutoDL 页面。';
-  $('#price-source').textContent=snapshot?snapshot.source+' · '+time(snapshot.checkedAt,true)+' · 当前已读取页面，非全站价格保证':'尚未读取';
+  $('#price-status').textContent=accountBusy==='pricing'?'正在读取报价…':pricingError?'读取失败：'+pricingError:expired?'报价已过期，请重新读取。':quote?'已读取 '+quote.region+' 报价。':snapshot?pricingWaitMessage(snapshot):'选择配置后查询报价。';
+  $('#price-source').textContent=snapshot?snapshot.source+' · '+time(snapshot.checkedAt,true):'尚未读取';
   const button=$('#refresh-pricing');
   button.disabled=!!accountBusy||!!browserAction||(!accountReady()||!!appState.browser?.busy);
   button.textContent=accountBusy==='pricing'?'读取中…':'读取 AutoDL 官方报价';
@@ -59,18 +59,14 @@ function updateAccountForm() {
     if(checkedRegions().join('|')!==source.region||$('#regions input')?.type!=='radio')regions([source.region]);
     if(appliedSource!==source.id){keepGpuModel(source.gpuModel,'源实例型号');form.elements.gpuCount.value=String(source.gpuCount);appliedSource=source.id;}
     updateGpuSelection();
-    const model=selectedGpuModel(),changed=!!model&&(gpuIdentity(model)!==gpuIdentity(source.gpuModel)||form.elements.gpuCount.value!==String(source.gpuCount));
-    const text=source.id+' · '+source.region+' · '+source.gpuModel+' × '+source.gpuCount+'。地区固定为源实例所在地区；目标 GPU 型号和数量默认与源实例相同，可以更换。源实例只被读取，不会被改动。'
-      +(changed?'已改为 '+model+' × '+form.elements.gpuCount.value+'：克隆后的环境与源实例相同，请确认它能在这张卡上运行（例如 50 系列需要 CUDA 12.8 及以上，程序会检查）。':'');
-    if($('#source-summary').textContent!==text)$('#source-summary').textContent=text;
-  } else if(locked) $('#source-summary').textContent='请先同步并选择已关机的源实例；无法识别地区或型号的实例不可用于自动克隆。';
+  }
   // 克隆只锁地区；源实例本身只被读取，程序不会改动它。
   form.elements.gpuModel.disabled=false;form.elements.gpuCount.disabled=false;
   form.elements.customGpuModel.disabled=form.elements.gpuModel.value!==CUSTOM_GPU_MODEL;
   form.elements.customGpuModel.required=form.elements.gpuModel.value===CUSTOM_GPU_MODEL;
   $$('input[name=region]').forEach(n=>n.disabled=locked);
   form.elements.sourceId.disabled=!locked;form.elements.sourceId.required=locked;
-  $('#copy-disk-note').textContent=form.elements.copyDataDisk.checked?'克隆系统盘并复制数据盘，目标扩容至少等于源扩容。源实例和源数据盘只被读取，原样保留。':'仅克隆系统盘，数据盘文件不会自动复制。目标数据盘按填写的扩容配置；源实例和源数据盘原样保留。';
+  $('#copy-disk-note').textContent=form.elements.copyDataDisk.checked?'目标数据盘扩容至少等于源实例。':'仅复制系统盘。';
   renderBudget();
 }
 function renderBudget() {
@@ -99,19 +95,20 @@ function renderAccount() {
     const placeholder=new Option(sync.checkedAt?'请选择已关机的源实例':'请先同步 AutoDL 实例','');placeholder.disabled=true;
     const options=rows.map(i=>{const option=new Option(i.id+' · '+(i.region||'地区未知')+' · '+(i.gpuModel||'型号未知')+' × '+(i.gpuCount??'?')+' · '+i.status,i.id);option.disabled=!i.cloneable||!!sync.error||!accountReady();return option;});
     select.replaceChildren(placeholder,...options);select.value=options.some(o=>o.value===selected&&!o.disabled)?selected:'';
-    $('#account-instances').innerHTML=rows.length?rows.map(i=>'<article class="instance-row"><div><strong>'+esc(i.gpuModel||'型号待核对')+' × '+esc(i.gpuCount??'?')+'</strong><span>'+esc(i.region||'地区待核对')+' · '+esc(i.status)+'</span><small>'+esc(i.id)+'</small>'+(i.reason?'<small class="instance-reason">'+esc(i.reason)+'</small>':'')+'</div><button type="button" class="button small" data-source="'+esc(i.id)+'"'+(!i.cloneable||sync.error||!accountReady()?' disabled':'')+'>用作克隆源</button></article>').join(''):'<p class="hint">'+(sync.checkedAt?'当前账号没有实例。':'登录并同步后显示实例，不会自动创建资源。')+'</p>';
+    $('#account-instances').innerHTML=rows.length?rows.map(i=>'<article class="instance-row"><div><strong>'+esc(i.gpuModel||'型号待核对')+' × '+esc(i.gpuCount??'?')+'</strong><span>'+esc(i.region||'地区待核对')+' · '+esc(i.status)+'</span><small>'+esc(i.id)+'</small>'+(i.reason?'<small class="instance-reason">'+esc(i.reason)+'</small>':'')+'</div><button type="button" class="button small" data-source="'+esc(i.id)+'"'+(!i.cloneable||sync.error||!accountReady()?' disabled':'')+'>用作克隆源</button></article>').join(''):'<p class="hint">'+(sync.checkedAt?'当前账号没有实例。':'尚未同步实例')+'</p>';
   }
-  $('#instances-status').textContent=sync.error?'同步失败：'+sync.error:sync.checkedAt?'最近同步 '+time(sync.checkedAt,true)+' · '+rows.length+' 个实例，点击同步更新平台状态。':'登录并同步后，可选择已关机实例进行同地区克隆。';
+  $('#instances-status').textContent=sync.error?'同步失败：'+sync.error:sync.checkedAt?'最近同步 '+time(sync.checkedAt,true)+' · '+rows.length+' 个实例':'尚未同步';
   const busy=!!accountBusy||!!appState.browser?.busy||!!browserAction;
-  for(const id of ['sync-instances','refresh-sources']){const b=$('#'+id);b.disabled=busy||!accountReady();b.textContent=accountBusy==='instances'?'正在同步…':id==='sync-instances'?'同步实例':'同步实例列表';}
+  $('#sync-instances').disabled=busy||!accountReady();
+  $('#sync-instances').textContent=accountBusy==='instances'?'正在同步…':'同步实例';
   const wallet=appState.wallet||{},s=wallet.snapshot;
   $('#wallet-balance').textContent=money(s?.balance);$('#wallet-vouchers').textContent=money(s?.vouchers);
-  $('#wallet-status').textContent=wallet.lastError?'余额查询失败：'+wallet.lastError:s?'最近查询 '+time(s.checkedAt,true)+(wallet.stale?' · 已过期，请刷新':' · 提交前会再次查询'):wallet.configured?'Token 已连接，请查询余额。':'余额 Token 尚未连接。';
+  $('#wallet-status').textContent=wallet.lastError?'余额查询失败：'+wallet.lastError:s?'最近查询 '+time(s.checkedAt,true)+(Date.now()-s.checkedAt>=WALLET_REFRESH_MS?' · 待更新':''):wallet.configured?'余额尚未查询':'余额 Token 未配置';
   const wf=$('#wallet-form'),storage=appState.credentialStorage;
   if(appState.wallet&&!walletSettingsLoaded){wf.elements.rememberToken.checked=!!wallet.rememberToken;walletSettingsLoaded=true;}
   wf.elements.token.required=!wallet.configured;
   wf.elements.token.placeholder=wallet.configured?'已配置，留空保留；填写可替换':'从 AutoDL 控制台 · 设置获取';
-  $('#wallet-key-status').textContent=(wallet.configured?(wallet.rememberToken?'已配置 · 已加密记住':'已配置 · 仅本次服务使用'):'尚未配置')+(storage?' · '+storage.method:'');
+  $('#wallet-key-status').textContent=(wallet.configured?(wallet.rememberToken?'已保存':'本次有效'):'未配置');
   if(storage){for(const form of [wf,$('#settings-form')]){const field=form.elements.rememberToken||form.elements.rememberCredentials;field.disabled=!storage.available;if(!storage.available)field.checked=false;}}
   $('#refresh-wallet').disabled=!!accountBusy||!wallet.configured;$('#clear-wallet').disabled=!!accountBusy||!wallet.configured;
   $('#check-budget').disabled=!!accountBusy||!wallet.configured||!currentQuote();
@@ -128,7 +125,6 @@ async function syncAccountInstances() {
   await accountCommand('instances',async()=>{const result=await api('/api/autodl/instances',{});appState.autodlInstances=result;renderAccount();toast('已同步 '+result.instances.length+' 个 AutoDL 实例');});
 }
 $('#sync-instances').addEventListener('click',()=>void syncAccountInstances());
-$('#refresh-sources').addEventListener('click',()=>void syncAccountInstances());
 $('#task-form').elements.sourceId.addEventListener('change',updateAccountForm);
 $('#task-form').addEventListener('input',renderBudget);
 $('#task-form').addEventListener('change',updateAccountForm);
@@ -146,6 +142,30 @@ $('#refresh-wallet').addEventListener('click',()=>void accountCommand('wallet',a
 $('#clear-wallet').addEventListener('click',()=>void accountCommand('wallet',async()=>{const result=await api('/api/wallet/clear-token',{});appState.wallet=result.wallet;walletSettingsLoaded=false;$('#wallet-form').elements.token.value='';toast('余额 Token 已从内存及保存配置中清除');}));
 $('#check-budget').addEventListener('click',()=>void accountCommand('budget',async()=>{const result=await api('/api/wallet/preflight',taskPayload());appState.wallet=result.wallet;toast('当前余额通过按官方报价的预检，提交前还会重新核对');}));
 function resetAccountState(){walletSettingsLoaded=false;instanceSignature=null;$('#wallet-form').reset();clearPricing();}
-$('#account-instances').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(!button||button.disabled)return;const f=$('#task-form');document.querySelector('[data-mode=clone]').click();f.elements.sourceId.value=button.dataset.source;updateAccountForm();$('#live-source-fields').scrollIntoView({block:'center',behavior:'smooth'});});
+$('#account-instances').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(!button||button.disabled)return;const f=$('#task-form');document.querySelector('[data-view=dashboard]').click();document.querySelector('[data-mode=clone]').click();f.elements.sourceId.value=button.dataset.source;updateAccountForm();$('#live-source-fields').scrollIntoView({block:'center',behavior:'smooth'});});
 window.addEventListener('appstatechange',renderAccount);
 renderAccount();
+
+let instanceAutoFor = null;
+window.addEventListener('appstatechange', () => {
+  const since = appState.browser?.session?.readySince;
+  if (!accountReady() || !since || accountBusy || browserAction || appState.browser?.busy || gpuSyncing || instanceAutoFor === since) return;
+  instanceAutoFor = since;
+  if (!(appState.autodlInstances?.checkedAt >= since)) void syncAccountInstances();
+});
+
+
+const WALLET_REFRESH_MS = 10 * 60 * 1000;
+let walletNextRefreshAt = 0;
+window.addEventListener('appstatechange', () => {
+  const wallet = appState.wallet;
+  if (!wallet?.configured) { walletNextRefreshAt = 0; return; }
+  if (wallet.snapshot && !wallet.lastError)
+    walletNextRefreshAt = Math.max(walletNextRefreshAt, wallet.snapshot.checkedAt + WALLET_REFRESH_MS);
+  if (Date.now() < walletNextRefreshAt || accountBusy || wallet.status === 'refreshing') return;
+  walletNextRefreshAt = Date.now() + WALLET_REFRESH_MS;
+  void accountCommand('wallet', async () => {
+    const result = await api('/api/wallet/refresh', {});
+    appState.wallet = result.wallet;
+  });
+});

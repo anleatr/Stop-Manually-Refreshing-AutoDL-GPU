@@ -1,9 +1,10 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { AppError, fail, redact, messageOf } from '../errors.mjs';
 import { gpuKey, archCudaProblem, candidateReasons, verifyQuote, requiredDiskGB, wantsDataDisk } from '../matching.mjs';
 import { parseHostRow, parseInstanceRow, parseQuoteText, parseGpuStockLabel } from './dom.mjs';
-import { SESSION_DETAILS, classifySessionSnapshot, readSessionSnapshot, isNetworkAccessDenied } from './autodl-session.mjs';
+import { SESSION_DETAILS, classifySessionSnapshot, readSessionSnapshot, readAccountName, isNetworkAccessDenied } from './autodl-session.mjs';
 import { validateCloneSource } from '../instances.mjs';
 import { IMAGE_LEVELS, normalizeImagePrefix, imageLabel, imageCuda, exactImagePath } from '../images.mjs';
 const BASE = 'https://www.autodl.com';
@@ -130,10 +131,14 @@ function describeModelFilter(options) {
 }
 // 本适配器仅操作用户可见 DOM，不调用私有库存/实例管理接口。
 export class AutoDLBrowserAdapter {
-  constructor(runtimeDir) {
+  constructor(runtimeDir, { desktopSession = false } = {}) {
     this.runtimeDir = path.resolve(runtimeDir);
     this.profileDir = path.join(this.runtimeDir, 'browser-profile');
+    this.desktopSession = desktopSession;
+    this.interactive = !desktopSession;
+    this.restorePending = desktopSession && existsSync(this.profileDir);
     this.context = null; this.page = null; this.sessionPage = null; this.prepared = null; this.probed = null;
+    this.accountName = null;
     this.previouslyReady = false; this.checkboxTimeoutMs = 5000;
     // 点击“创建并开机”后的观察时长；按钮仍在加载时最多等到 clickLoadingMs。测试中可缩短。
     this.clickOutcomeMs = 15000; this.clickLoadingMs = 65000; this.clickPollMs = 100; this.rejectGraceMs = 1500; this.rejectRecheckMs = 4000;
@@ -157,7 +162,7 @@ export class AutoDLBrowserAdapter {
   }
   sessionStatus() {
     const browserOpen = !!this.context && !!this.page && !this.page.isClosed();
-    return { ...this.session, browserOpen };
+    return { ...this.session, browserOpen, accountName: this.session.state === 'ready' ? this.accountName : null };
   }
   async launchChannel(chromium) {
     if (process.env.AUTODL_BROWSER_CHANNEL) return { channel: process.env.AUTODL_BROWSER_CHANNEL };
@@ -177,7 +182,7 @@ export class AutoDLBrowserAdapter {
       try {
         this.context = await chromium.launchPersistentContext(this.profileDir, {
           // 人工登录使用浏览器安全沙箱，并让页面跟随用户调整的窗口尺寸。
-          headless: false, chromiumSandbox: true, viewport: null, locale: 'zh-CN',
+          headless: !this.interactive, chromiumSandbox: true, viewport: null, locale: 'zh-CN',
           // 保留浏览器的钓鱼网站检测与组件更新（含证书吊销列表）；Playwright 默认会关闭它们。
           ignoreDefaultArgs: ['--disable-client-side-phishing-detection', '--disable-component-update'],
           ...await this.launchChannel(chromium),
@@ -191,6 +196,7 @@ export class AutoDLBrowserAdapter {
       const context = this.context;
       context.on('close', () => {
         if (this.context !== context) return;
+        if (this.desktopSession && this.interactive) this.restorePending = true;
         this.context = null; this.page = null; this.sessionPage = null; this.prepared = null; this.probed = null;
         clearTimeout(this.imageTabTimer); this.imageTab = null; this.catalogTab = null; this.cloneCache = null; this.setSession('closed');
       });
@@ -201,12 +207,24 @@ export class AutoDLBrowserAdapter {
     page.setDefaultTimeout(12000); page.setDefaultNavigationTimeout(30000);
     page.on('close', () => {
       if (this.page !== page) return;
+      if (this.desktopSession && this.interactive) this.restorePending = true;
       this.page = null; this.prepared = null; this.probed = null; this.setSession('closed');
     });
     this.setSession('unchecked');
     return page;
   }
+  async restoreSession() {
+    // 在引擎的浏览器互斥区内切换，同一个资料目录只能由一个 Edge 进程使用。
+    await this.close();
+    await this.browser();
+    return this.checkLogin();
+  }
   async login() {
+    if (this.desktopSession && !this.interactive) {
+      await this.close();
+      this.interactive = true;
+    }
+    this.restorePending = false;
     const page = await this.browser();
     const target = this.sessionPage && !this.sessionPage.isClosed() ? this.sessionPage : page;
     try {
@@ -267,6 +285,7 @@ export class AutoDLBrowserAdapter {
         const state = classifySessionSnapshot(snapshot, { previouslyReady: this.previouslyReady });
         const httpFailed = response && response.status() >= 400;
         this.setSession(httpFailed && !['login_required','expired','human_required'].includes(state) ? 'error' : state, { checked: true });
+        this.accountName = this.session.state === 'ready' ? await readAccountName(tab) : null;
         if (['login_required','expired','human_required'].includes(state)) await tab.bringToFront();
       }
     } catch (error) {
@@ -275,6 +294,7 @@ export class AutoDLBrowserAdapter {
     }
     // 用户在检查过程中关闭主窗口时，不能把临时页结果当作仍可操作。
     if (this.context !== context || !this.page || this.page.isClosed()) this.setSession('closed');
+    if (this.desktopSession && this.interactive && this.session.state === 'ready') return this.restoreSession();
     return { message: this.session.message, session: this.sessionStatus() };
   }
   async checkPage() {
@@ -1138,8 +1158,13 @@ export class AutoDLBrowserAdapter {
       catch { fail('PROFILE_BUSY','专用浏览器资料仍被占用，未能完整清除；请关闭该窗口后重试退出'); }
     }
     this.context=null;this.page=null;this.sessionPage=null;this.prepared=null;this.probed=null;this.imageTab=null;this.catalogTab=null;this.cloneCache=null;this.previouslyReady=false;
+    this.accountName = null;
     this.setSession('not_open',{checked:true});
     return {session:this.sessionStatus(),message:'已退出本项目的 AutoDL 登录并清除专用浏览器资料；云端实例与数据盘保留'};
   }
-  async close() { if(this.context) await this.context.close(); }
+  async close() {
+    this.interactive = !this.desktopSession;
+    this.restorePending = false;
+    if (this.context) await this.context.close();
+  }
 }

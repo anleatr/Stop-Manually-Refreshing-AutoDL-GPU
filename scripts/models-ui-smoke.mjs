@@ -57,6 +57,7 @@ try {
   });
   await page.goto(base);
   await page.waitForFunction(() => document.querySelector('#connection').textContent === '已连接');
+ await page.locator('[data-view=dashboard]').click();await page.locator('#advanced-settings').evaluate(node=>node.open=true);
   const form = page.locator('#task-form'), model = form.locator('[name=gpuModel]'), custom = form.locator('[name=customGpuModel]');
   assert.equal(await form.locator('[name=provider]').count(), 0);
   // 默认发现空卡后自动创建并开机，此时必须勾选费用授权；本脚本之后改为“只通知”，不需要余额 Token。
@@ -89,11 +90,11 @@ try {
     [...document.querySelector('#task-form [name=gpuModel]').options].find(option => option.value === value)?.textContent === text, [value, text]);
   assert.deepEqual(await optionValues(), []);
   assert.equal(await model.locator('option').first().textContent(), '请先点“同步 AutoDL 型号”');
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   assert.equal(posts.length, 0); assert.equal(app.store.tasks().length, 0);
 
   // 同步后只列出所选地区（默认北京B区）的型号，括号内为同步时的空闲/总数；加选地区后列出合集并分地区标注。
-  await page.locator('#sync-gpus').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#sync-gpus').click();
   await waitOptionText('RTX 4090', 'RTX 4090（2/8）');
   assert.match(await page.locator('#gpu-model-hint').textContent(), /^同步于/);
   const beijing = SYNTHETIC_GPU_CATALOG.regions[0].models.map(row => row.model);
@@ -102,16 +103,16 @@ try {
   await form.locator('[name=region][value="西北B区"]').check();
   assert.deepEqual(await optionValues(), [...beijing, 'RTX 3090']);
   assert.equal(await optionText('RTX 4090'), 'RTX 4090（北京B区 2/8，西北B区 0/16）');
-  assert.match(await page.locator('#gpu-model-hint').textContent(), /没有该型号的地区会自动跳过/);
+  assert.equal(await form.locator('[name=region]:checked').count(),2);
   await form.locator('[name=region][value="西北B区"]').uncheck();
   assert.deepEqual(await optionValues(), beijing);
 
   // 新建可选型号；克隆必须使用同步源实例的精确型号、数量和地区。
-  await selectSyntheticImage(page);
+  await page.locator('[data-view=dashboard]').click();await selectSyntheticImage(page);
   await model.selectOption('A100'); await form.locator('[name=gpuCount]').selectOption('2');
   assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100');
   assert.match(await page.locator('#metric-gpu-detail').textContent(), /2 张.*新建实例/);
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '1');
   assert.equal(app.store.tasks()[0].config.gpuModel, 'A100');
   assert.equal(app.store.tasks()[0].config.gpuCount, 2);
@@ -125,18 +126,18 @@ try {
     const catalog = await syntheticGpuCatalog(regions);
     return { ...catalog, regions: catalog.regions.map(row => ({ ...row, models: row.models.filter(item => item.model !== 'A100') })) };
   };
-  await page.locator('#sync-gpus').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#sync-gpus').click();
   await waitOptionText('A100', 'A100（所选地区当前未列出）');
   assert.equal(await model.inputValue(), 'A100');
   assert.match(await page.locator('#gpu-model-hint').textContent(), /所选型号不在所选地区的同步列表中/);
   assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100');
   autodl.gpuCatalog = syntheticGpuCatalog;
-  await page.locator('#sync-gpus').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#sync-gpus').click();
   await waitOptionText('A100', 'A100（2/8）');
   assert.equal(await model.inputValue(), 'A100');
-  await page.locator('#sync-instances').click();
+  await page.locator('[data-view=account]').click();await page.locator('#sync-instances').click();
   await page.waitForFunction(() => document.querySelectorAll('#account-instances .instance-row').length === 3);
-  await page.locator('[data-mode=clone]').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click();
   await form.locator('[name=sourceId]').selectOption('syntheticl20-source');
   assert.equal(await poll.inputValue(), '1');
   assert.equal(await model.inputValue(), 'L20');
@@ -146,33 +147,33 @@ try {
   // 克隆到其他型号：L20 源实例 → RTX 4090 × 2；地区仍为源实例所在地区。
   await model.selectOption('RTX 4090');
   assert.match(await page.locator('#metric-gpu-detail').textContent(), /克隆到其他型号/);
-  assert.match(await page.locator('#source-summary').textContent(), /已改为 RTX 4090 × 2/);
+  assert.equal(await page.locator('#source-summary').count(), 0);
   assert.equal(await form.locator('[name=region]').evaluateAll(nodes => nodes.every(node => node.disabled)), true);
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '2');
   const moved = app.store.tasks().find(task => task.config.mode === 'clone' && task.config.sourceId === 'syntheticl20-source');
   assert.equal(moved.config.gpuModel, 'RTX 4090'); assert.equal(moved.config.gpuCount, 2); assert.equal(moved.config.cuda, ''); assert.deepEqual(moved.config.regions, ['北京B区']);
 
   // 自定义名称的空值不能提交；显存、版本等后缀不得被截掉。
-  await page.locator('[data-mode=create]').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click();
   await model.selectOption('__custom__'); await custom.fill('');
   assert.equal(await custom.isVisible(), true); assert.equal(await custom.isEnabled(), true);
   assert.equal(await custom.evaluate(input => input.required && input.validity.valueMissing), true);
-  await page.locator('#submit-task').click(); assert.equal(posts.length, 2);
-  await custom.fill('   '); await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click(); assert.equal(posts.length, 2);
+  await custom.fill('   '); await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('请选择 GPU 精确型号'));
   assert.equal(posts.length, 2);
-  await page.locator('[data-mode=create]').click(); await custom.fill('  A100 80GB  ');
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click(); await custom.fill('  A100 80GB  ');
   assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100 80GB');
   await page.evaluate(() => new Promise(resolve => window.addEventListener('appstatechange', resolve, { once: true })));
   assert.equal(await model.inputValue(), '__custom__'); assert.equal(await custom.inputValue(), '  A100 80GB  ');
   assert.equal(await custom.inputValue(), '  A100 80GB  ');
-  await page.locator('[data-mode=clone]').click(); await page.locator('[data-mode=create]').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click(); await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click();
   assert.equal(await custom.inputValue(), '  A100 80GB  ');
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '3');
   assert.equal(app.store.tasks().find(task => task.config.gpuModel === 'A100 80GB').config.mode, 'create');
-  await page.locator('[data-mode=clone]').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click();
   await form.locator('[name=sourceId]').selectOption('syntheticcustom-source');
   // 源实例型号不在同步列表中时原样锁定在型号选项里，不改用“其他型号”或别的卡。
   assert.equal(await model.inputValue(), customModel); assert.equal(await optionText(customModel), customModel + '（源实例型号）');
@@ -180,7 +181,7 @@ try {
   // 克隆的提示只说明源型号不在该地区列表中，不建议改选“其他型号”。
   assert.match(await page.locator('#gpu-model-hint').textContent(), /源实例型号不在该地区的同步列表中/);
   assert.doesNotMatch(await page.locator('#gpu-model-hint').textContent(), /其他型号/);
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '4');
   assert.equal(app.store.tasks().find(task => task.config.gpuModel === customModel).config.mode, 'clone');
   assert.equal(app.store.tasks().find(task => task.config.gpuModel === customModel).config.gpuModel, customModel);
@@ -195,9 +196,9 @@ try {
   assert.equal(app.store.tasks().every(task => task.state === 'queued' && !task.operation), true);
 
   // 长名称和窄屏仍可阅读，不引起整页横向滚动；两种模式均检查。
-  await page.locator('[data-mode=create]').click(); await custom.fill(longModel);
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click(); await custom.fill(longModel);
   for (const mode of ['create', 'clone']) {
-    await page.locator('[data-mode=' + mode + ']').click();
+    await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=' + mode + ']').click();
     if (mode === 'clone') await form.locator('[name=sourceId]').selectOption('syntheticlong-source');
     for (const width of [1920, 1440, 1280, 1024, 768, 520, 390, 360, 320]) {
       await page.setViewportSize({ width, height: 1080 });
@@ -214,9 +215,9 @@ try {
   await form.locator('[name=sourceId]').selectOption('syntheticcustom-source');
   await page.locator('#toast').waitFor({ state: 'hidden', timeout: 10000 });
   await page.setViewportSize({ width: 1440, height: 1080 }); await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: path.join(root, 'docs', 'gpu-models.png'), fullPage: true });
+  await page.screenshot({ path: path.join(dir, 'gpu-models.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: path.join(root, 'docs', 'gpu-models-mobile.png'), fullPage: true });
+  await page.screenshot({ path: path.join(dir, 'gpu-models-mobile.png'), fullPage: true });
 
   // 登录核验后自动刷新型号目录：会话的 readySince 晚于目录同步时间时同步一次，之后不再重复。
   const syncCatalog = autodl.gpuCatalog; autodl.gpuCatalog = async regions => { catalogSyncs++; return syncCatalog(regions); };
@@ -224,9 +225,9 @@ try {
   readySince = Date.now();
   for (const deadline = Date.now() + 15000; catalogSyncs < 1 && Date.now() < deadline;) await page.waitForTimeout(100);
   assert.equal(catalogSyncs, 1);
-  await page.waitForFunction(() => !document.querySelector('#sync-gpus').disabled && /^同步于 .*（(?:刚刚|\d+ 分钟前)）/.test(document.querySelector('#gpu-model-hint').textContent));
+  await page.waitForFunction(() => !document.querySelector('#sync-gpus').disabled && /^同步于 /.test(document.querySelector('#gpu-model-hint').textContent));
   await page.waitForTimeout(4600); assert.equal(catalogSyncs, 1);
-  assert.match(await page.locator('#gpu-model-hint').textContent(), /每次登录核验后自动刷新/);
+  assert.match(await page.locator('#gpu-model-hint').textContent(), /同步时的空闲\/总数/);
   // 真实浏览器中的本地 DOM 夹具：不用真实 AutoDL 页面或会话。
   fixtures.set('/synthetic-host-dom', '<!doctype html><meta charset="utf-8"><body>' +
     '<label class="el-checkbox"><input type="checkbox" checked>全部</label>' +

@@ -29,7 +29,7 @@ export class Engine {
   }
   // 另一个任务（同型号、同卡数、地区有重叠）有尚未绑定实例的提交时，本任务不提交：两边同时等结果时分不清新实例属于谁。
   pendingOverlap(t) {
-    return this.store.tasks().find(o => o.id !== t.id && o.config.provider === 'autodl' && o.operation && !o.operation.receipt?.instanceId
+    return this.store.tasks().find(o => o.id !== t.id && o.config.provider === 'autodl' && !o.manualCompletion && o.operation && !o.operation.receipt?.instanceId
       && gpuKey(o.config.gpuModel) === gpuKey(t.config.gpuModel) && o.config.gpuCount === t.config.gpuCount
       && o.config.regions.some(r => t.config.regions.includes(r))) || null;
   }
@@ -44,7 +44,7 @@ export class Engine {
   }
   recover() {
     for (const t of this.store.tasks()) {
-      if (t.config.provider!=='autodl') continue;
+      if (t.config.provider!=='autodl' || t.manualCompletion || t.deletedAt) continue;
       // 只落盘了操作意图、还没进入点击：不论任务此时是暂停、已停止还是进行中，都清除这条记录（适配器必须在 mark 之后才点击）。
       // 否则暂停后进程被强行结束，这条意图会永久挡住恢复、重新核对和同型号/同源的新任务。
       if (t.operation?.stage === 'intent') {
@@ -120,6 +120,8 @@ export class Engine {
     if (this.busy || this.stopping) return;
     this.busy = true;
     try {
+      const browser = this.adapters.autodl;
+      if (browser?.restorePending) { await browser.restoreSession(); return; }
       const now = this.clock();
       const task = this.store.tasks().filter(t => t.config.provider==='autodl' && ACTIVE.has(t.state) && t.nextCheckAt <= now).sort((a,b) => a.nextCheckAt - b.nextCheckAt)[0];
       if (task) await this.step(task);

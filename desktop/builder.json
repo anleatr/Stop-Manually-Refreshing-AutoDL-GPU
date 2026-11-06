@@ -1,0 +1,33 @@
+{
+  "appId": "local.autodl.gpuwatch",
+  "productName": "AutoDL GPU 候机室",
+  "directories": {
+    "output": "desktop/out"
+  },
+  "files": [
+    "desktop/main.mjs",
+    "desktop/icon.png",
+    "src/**/*",
+    "public/**/*",
+    "package.json",
+    "LICENSE"
+  ],
+  "asarUnpack": [
+    "node_modules/playwright*/**/*"
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "desktop/icon.png",
+    "artifactName": "AutoDL-GPU-Watch-${version}-Windows-x64-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "deleteAppDataOnUninstall": false,
+    "shortcutName": "GPU候机室"
+  },
+  "electronDist": "node_modules/electron/dist"
+}

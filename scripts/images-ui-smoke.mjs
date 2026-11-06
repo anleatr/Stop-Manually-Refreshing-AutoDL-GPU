@@ -60,7 +60,8 @@ try {
     return route.continue();
   });
   const page=await context.newPage();await page.goto(base);await page.waitForFunction(()=>document.querySelector('#connection').textContent==='已连接');
-  const form=page.locator('#task-form'),field=name=>form.locator('[name='+name+']');
+  await page.locator('[data-view=dashboard]').click();await page.locator('#advanced-settings').evaluate(node=>node.open=true);
+ const form=page.locator('#task-form'),field=name=>form.locator('[name='+name+']');
   const values=id=>page.locator(id).locator('option').evaluateAll(options=>options.filter(o=>o.value&&!o.disabled).map(o=>o.value));
   const waitChoice=async (id,label)=>page.waitForFunction(([id,label])=>{const s=document.querySelector(id);return !s.disabled&&[...s.options].some(o=>o.value===label&&!o.disabled);},[id,label]);
   const refresh=async()=>{await page.evaluate(()=>refresh());};
@@ -69,7 +70,7 @@ try {
   for(const id of ids)assert.equal(await page.locator(id).isDisabled(),true);
   assert.deepEqual(requests,[]);
   await field('gpuModel').selectOption('RTX 4090');await field('action').selectOption('observe');
-  await selectSyntheticImage(page);
+  await page.locator('[data-view=dashboard]').click();await selectSyntheticImage(page);
   assert.deepEqual(requests,[[],['PyTorch'],['PyTorch','2.1.0'],['PyTorch','2.1.0','3.10(ubuntu22.04)']]);
   assert.deepEqual(await values(ids[3]),['12.1']);assert.equal(await field('cuda').inputValue(),'12.1');
   assert.equal(await field('imagePath').inputValue(),SYNTHETIC_IMAGES[0].join(' / '));
@@ -81,15 +82,15 @@ try {
   assert.deepEqual(await values(ids[3]),['12.8','13.0']);await page.locator(ids[3]).selectOption('12.8');
   assert.equal(await field('cuda').inputValue(),'12.8');
   const createPath=await field('imagePath').inputValue();
-  await page.locator('#sync-instances').click();await page.waitForFunction(()=>document.querySelector('#task-form').elements.sourceId.options.length===2);
-  await page.locator('[data-mode=clone]').click();await field('sourceId').selectOption(source.id);
+  await page.locator('[data-view=account]').click();await page.locator('#sync-instances').click();await page.waitForFunction(()=>document.querySelector('#task-form').elements.sourceId.options.length===2);
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click();await field('sourceId').selectOption(source.id);
   // 克隆不填写 CUDA：环境随源实例系统盘，首次检查时从 AutoDL 克隆页读取。
   assert.equal(await field('cuda').inputValue(),'');assert.equal(await field('cuda').evaluate(n=>n.type==='hidden'&&!n.required),true);
   assert.equal(await field('imagePath').isDisabled(),true);
   assert.equal(await page.locator('#create-fields select').evaluateAll(selects=>selects.every(s=>s.disabled&&!s.required)),true);
   assert.equal(await form.evaluate(form=>form.checkValidity()),true);
-  await page.locator('[data-mode=create]').click();assert.equal(await field('cuda').inputValue(),'12.8');assert.equal(await field('imagePath').inputValue(),createPath);
-  await page.locator('[data-mode=clone]').click();assert.equal(await field('cuda').inputValue(),'');await page.locator('[data-mode=create]').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click();assert.equal(await field('cuda').inputValue(),'12.8');assert.equal(await field('imagePath').inputValue(),createPath);
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click();assert.equal(await field('cuda').inputValue(),'');await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click();
   for(const mode of ['failure','missing','empty','disabled','duplicate']){
     responseMode=mode;await page.locator('#sync-images').click();
     const expected=mode==='failure'?'同步失败':mode==='missing'?'旧版代码':mode==='duplicate'?'重名选项':'暂无可用';
@@ -99,9 +100,9 @@ try {
   responseMode='deferred';await page.locator('#sync-images').click();
   await page.waitForFunction(()=>document.querySelector('#sync-images').textContent.includes('正在同步'));
   while(!releaseRead)await new Promise(resolve=>setImmediate(resolve));
-  await page.locator('[data-mode=clone]').click();responseMode='normal';releaseRead();releaseRead=null;
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=clone]').click();responseMode='normal';releaseRead();releaseRead=null;
   await page.waitForResponse(response=>response.url()===base+'/api/autodl/images');
-  await page.locator('[data-mode=create]').click();assert.equal(await page.locator(ids[0]).isDisabled(),true);assert.equal(await field('imagePath').inputValue(),'');
+  await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click();assert.equal(await page.locator(ids[0]).isDisabled(),true);assert.equal(await field('imagePath').inputValue(),'');
   await refresh();await selectSyntheticImage(page,SYNTHETIC_IMAGES[1]);
   ready=false;await refresh();assert.equal(await page.locator('#sync-images').isDisabled(),true);assert.equal(await field('imagePath').inputValue(),'');assert.equal(await field('cuda').inputValue(),'');
   ready=true;await refresh();await selectSyntheticImage(page,SYNTHETIC_IMAGES[1]);
@@ -110,8 +111,8 @@ try {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+1),false,'image page overflow '+width);
   }
   await page.locator('#toast').waitFor({state:'hidden',timeout:10000});
-  await page.setViewportSize({width:1440,height:1080});await form.screenshot({path:path.join(root,'docs','official-images.png')});
-  await page.setViewportSize({width:390,height:844});await form.screenshot({path:path.join(root,'docs','official-images-mobile.png')});
+  await page.setViewportSize({width:1440,height:1080});await form.screenshot({path:path.join(dir, 'official-images.png')});
+  await page.setViewportSize({width:390,height:844});await form.screenshot({path:path.join(dir, 'official-images-mobile.png')});
 
   // 真实浏览器运行 Element 风格的本地合成 DOM，覆盖适配器而非仅模拟返回值。
   const dom=await context.newPage();await dom.goto(base+'/fixture/images');

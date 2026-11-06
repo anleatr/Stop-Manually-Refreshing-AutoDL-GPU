@@ -7,7 +7,6 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { systemSecretProtector } from '../src/credentials.mjs';
 import { Store } from '../src/store.mjs';
 import { Wallet } from '../src/wallet.mjs';
-import { AiAssistant } from '../src/ai.mjs';
 function fixture(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'autodl-secrets-isolated-')),key=randomBytes(32);let writes=0;
   const protector={available:true,method:'isolated AES test',protect(plain){writes++;const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);return{data:Buffer.concat([cipher.update(plain,'utf8'),cipher.final()]).toString('base64'),iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64')};},unprotect(s){const cipher=createDecipheriv('aes-256-gcm',key,Buffer.from(s.iv,'base64'));cipher.setAuthTag(Buffer.from(s.tag,'base64'));return Buffer.concat([cipher.update(Buffer.from(s.data,'base64')),cipher.final()]).toString('utf8');}};
@@ -41,8 +40,12 @@ test('余额记住与取消记住不回填秘密，服务关闭保留记忆，�
   const restored=new Wallet({store:f.reload()});assert.equal(restored.publicState().configured,true);restored.setToken('',{rememberToken:false});assert.equal(restored.publicState().configured,true);assert.equal(new Wallet({store:f.reload()}).publicState().configured,false);
   restored.setToken('synthetic-wallet-persist',{rememberToken:true});restored.clearToken();assert.equal(restored.publicState().configured,false);assert.equal(f.reload().data.walletSettings.rememberToken,false);
 });
-test('系统保护失败时撤销凭据修改且不创建明文临时文件，核心无Key配置仍可用',t=>{
-  const f=fixture(t),unavailable=systemSecretProtector({platform:'linux'});f.store.secretStorage.protector=unavailable;const ai=new AiAssistant(f.store);
-  assert.throws(()=>ai.saveSettings({enabled:true,rememberKey:true,apiKey:'sk-synthetic-denied-123456'}),{code:'CREDENTIALS_UNAVAILABLE'});assert.equal(ai.publicState().hasKey,false);assert.equal(fs.existsSync(f.store.file),false);assert.equal(fs.existsSync(f.store.file+'.tmp'),false);
-  ai.saveSettings({enabled:true,rememberKey:false,apiKey:'sk-synthetic-memory-123456'});assert.equal(ai.publicState().ready,true);assert.equal(f.disk().includes('sk-synthetic'),false);ai.close();
+
+test('系统保护失败时余额凭据回滚，内存 Token 仍可配置',t=>{
+  const f=fixture(t);f.store.secretStorage.protector=systemSecretProtector({platform:'linux'});
+  const wallet=new Wallet({store:f.store});
+  assert.throws(()=>wallet.setToken('synthetic-wallet-key',{rememberToken:true}),{code:'CREDENTIALS_UNAVAILABLE'});
+  assert.equal(wallet.publicState().configured,false);assert.equal(fs.existsSync(f.store.file),false);
+  wallet.setToken('synthetic-wallet-key',{rememberToken:false});assert.equal(wallet.publicState().configured,true);
+  assert.equal(f.disk().includes('synthetic-wallet-key'),false);wallet.close();
 });

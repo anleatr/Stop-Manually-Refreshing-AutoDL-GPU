@@ -38,9 +38,14 @@ try {
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
   page.on('request',request=>{if(new URL(request.url()).pathname==='/api/tasks'&&request.method()==='POST')posts.push(request.postDataJSON());});
   await page.goto(base);await page.waitForFunction(()=>document.querySelector('#connection').textContent==='已连接');
+  await page.locator('[data-view=dashboard]').click();
   const form=page.locator('#task-form'),field=name=>form.locator('[name='+name+']'),dialog=page.locator('#task-conflict-dialog');
+  assert.equal(await page.locator('#advanced-settings').evaluate(node=>node.open),false);
+  assert.equal(await page.locator('#submit-task').textContent(),'创建任务');
+  assert.equal(await page.locator('#pricing-card').isVisible(),false);
+  await page.locator('#advanced-settings > summary').click();
   await selectSyntheticImage(page);await field('gpuModel').selectOption('RTX 4090');await field('pollSeconds').fill('1');await field('extraDiskGB').fill('50');
-  await field('balanceGuard').uncheck();await field('action').selectOption('execute');await field('paidConsent').check();
+  await field('balanceGuard').uncheck();await field('action').selectOption('execute');await field('paidConsent').check();await page.locator('#advanced-settings > summary').click();
   await page.locator('#submit-task').click();await dialog.waitFor({state:'visible'});
   assert.match(await page.locator('#conflict-old').textContent(),/CUDA 13\.0/);assert.match(await page.locator('#conflict-error').textContent(),/13\.0.*失效/);
   assert.match(await page.locator('#conflict-current').textContent(),/CUDA 12\.1/);assert.match(await page.locator('#conflict-current').textContent(),/自动提交并开机/);
@@ -54,12 +59,14 @@ try {
     assert.equal(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1),true,'弹窗溢出 '+width);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'页面溢出 '+width);
   }
-  await page.setViewportSize({width:1440,height:1080});await page.screenshot({path:path.join(root,'docs','task-conflict.png')});
+  await page.setViewportSize({width:1440,height:1080});await page.screenshot({path:path.join(dir, 'task-conflict.png')});
   await page.locator('#replace-task').click();await page.waitForFunction(()=>!document.querySelector('#task-conflict-dialog').open);await page.waitForFunction(()=>document.querySelector('#task-count').textContent==='2');
   const next=app.store.tasks()[0];assert.equal(old.state,'cancelled');assert.equal(old.replacedBy,next.id);assert.equal(next.replacesTaskId,old.id);
   assert.equal(next.config.cuda,'12.1');assert.equal(next.config.pollSeconds,1);assert.equal(next.config.extraDiskGB,50);assert.equal(next.config.action,'execute');assert.equal(next.config.paidConsent,true);assert.equal(next.operation,null);
   assert.equal(posts.at(-1).replaceTaskId,old.id);assert.equal(posts.at(-1).pollSeconds,'1');
 
+  await page.locator('#queue-panel').waitFor();
+  await page.locator('[data-view=dashboard]').click();
   // 停止后仍保留的提交必须阻止重建，不能因状态 cancelled 就重复租用。
   app.store.patch(next,{state:'cancelled',operation:{stage:'click_started',at:1},lastError:'提交结果需核对'});
   await page.locator('#submit-task').click();await dialog.waitFor({state:'visible'});
@@ -73,24 +80,25 @@ try {
   assert.equal(await field('pollSeconds').inputValue(),'1');assert.equal(app.store.tasks().length,2);
   // 已停止的不明提交：详情页可重新核对实例列表；合成列表没有新增实例时清除记录，之后可按当前配置新建。
   legacyConflict=false;app.store.patch(next,{operation:{...next.operation,at:Date.now()-3*60000,baselineIds:[]}});await page.evaluate(()=>refresh());
+  await page.locator('[data-view=queue]').click();
   await page.locator(`[data-detail="${next.id}"]`).click();await page.locator('#task-dialog').waitFor({state:'visible'});
   assert.equal(await page.locator('#attach-form').count(),1);const recheck=page.locator('#detail-content [data-command="recheck"]');assert.equal(await recheck.count(),1);
   page.once('dialog',confirmDialog=>void confirmDialog.accept());await recheck.click();
   await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('已清除此次提交记录'));
   assert.equal(next.operation,null);assert.equal(next.state,'cancelled');assert.ok(next.logs.some(l=>/重新核对/.test(l.message)));
-  await page.locator('#close-dialog').click();await page.locator('#submit-task').click();
+  await page.locator('#close-dialog').click();await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(()=>document.querySelector('#task-count').textContent==='3');assert.equal(app.store.tasks().length,3);assert.equal(app.store.tasks()[0].operation,null);
-  // 任务队列：两栏布局下与左侧表单底部对齐，任务多时在队列内部滚动；可以收起，刷新页面后保持。
+  // 任务队列：队列位于独立页面，任务多时在队列内部滚动；可以收起，刷新页面后保持。
   await page.setViewportSize({width:1440,height:1080});
   for(let i=0;i<10;i++){const extra=app.store.create(normalizeConfig(configInput({name:'合成队列任务 '+(i+1)})));app.store.patch(extra,{state:'cancelled',lastScan:{at:Date.now(),count:10,summary:'合成扫描摘要：北京B区（1 页，已到末页），用于验证队列滚动'}});}
   await page.waitForFunction(()=>document.querySelector('#task-count').textContent==='13');
-  const queue=await page.evaluate(()=>{const list=document.querySelector('#tasks'),panel=document.querySelector('#queue-panel'),composer=document.querySelector('.composer'),column=document.querySelector('.task-column');
-    return {scrolls:list.scrollHeight>list.clientHeight+10,columnBottom:column.getBoundingClientRect().bottom,composerBottom:composer.getBoundingClientRect().bottom,panelHeight:panel.getBoundingClientRect().height};});
-  assert.equal(queue.scrolls,true);assert.ok(Math.abs(queue.columnBottom-queue.composerBottom)<=2,JSON.stringify(queue));assert.ok(queue.panelHeight>=390,JSON.stringify(queue));
+  assert.equal(await page.locator('#queue-panel').isVisible(),true);
+  assert.equal(await page.locator('.composer').isVisible(),false);
+  assert.equal(await page.locator('#tasks').evaluate(list=>getComputedStyle(list).overflowY),'visible');
   await page.locator('#toggle-queue').click();
   assert.equal(await page.locator('#tasks').isHidden(),true);const folded=(await page.locator('#queue-summary').textContent()).match(/已收起：进行中 (\d+) 个，需要处理 (\d+) 个，其余 (\d+) 个/);
   assert.ok(folded&&Number(folded[1])+Number(folded[2])+Number(folded[3])===13,String(folded));
-  await page.reload();await page.waitForFunction(()=>document.querySelector('#task-count').textContent==='13');
+  await page.reload();await page.locator('[data-view=queue]').click();await page.waitForFunction(()=>document.querySelector('#task-count').textContent==='13');
   assert.equal(await page.locator('#tasks').isHidden(),true);assert.equal(await page.locator('#toggle-queue').textContent(),'展开');
   await page.locator('#toggle-queue').click();assert.equal(await page.locator('#tasks').isVisible(),true);
   // 详情日志：往下翻看旧日志时，每2秒的刷新和新增日志都不会把它弹回最上面。
@@ -106,7 +114,7 @@ try {
   assert.equal(after.key,before.key,JSON.stringify({before,after}));assert.ok(after.scrollTop>=before.scrollTop,JSON.stringify({before,after}));
   await page.locator('#close-dialog').click();
   assert.equal(app.store.data.notifications.length,0);assert.equal(forbiddenCalls,0);assert.deepEqual(blocked,[]);assert.deepEqual(errors,[]);
-  console.log('任务界面通过：旧 CUDA 错误定位、当前表单保留、查看日志、显式重建、提交保护、旧后台提示、已停止不明提交的重新核对与清除后新建、320～1440px 弹窗布局；任务队列与左侧表单底部对齐并在内部滚动、收起后刷新仍保持；详情日志往下翻时刷新与新增日志不会弹回最上面；无云端操作或通知。');
+  console.log('任务界面通过：旧 CUDA 错误定位、当前表单保留、查看日志、显式重建、提交保护、旧后台提示、已停止不明提交的重新核对与清除后新建、320～1440px 弹窗布局；独立任务队列页面滚动、收起后刷新仍保持；详情日志往下翻时刷新与新增日志不会弹回最上面；无云端操作或通知。');
 } finally {
   await browser?.close();await app?.close();const target=path.resolve(dir);
   assert.equal(path.dirname(target),path.resolve(os.tmpdir()));assert.ok(path.basename(target).startsWith('autodl-tasks-ui-isolated-'));fs.rmSync(target,{recursive:true,force:true});

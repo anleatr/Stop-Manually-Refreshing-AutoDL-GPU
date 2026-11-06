@@ -17,7 +17,7 @@ export function canReplaceTask(task) {
 }
 export function conflictError(task) {
   const conflict = {
-    id: task.id, name: task.config.name, state: task.state, mode: task.config.mode,
+    id: task.id, name: task.config.name, state: task.state, mode: task.config.mode, updatedAt: task.updatedAt,
     gpuModel: task.config.gpuModel, cuda: task.config.cuda, regions: task.config.regions,
     lastError: task.lastError || null, hasOperation: !!task.operation,
     replaceable: canReplaceTask(task),
@@ -26,4 +26,12 @@ export function conflictError(task) {
     : conflict.replaceable ? '已有未提交的旧任务，可查看原因或停止旧任务并按当前配置重建'
     : '已有相同资源的任务正在运行或等待处理，请先查看原任务';
   return new AppError('DUPLICATE', message, { status: 409, conflict });
+}
+
+export function manualCompletionPatch(task, at) {
+  return {
+    state:'completed', updatedAt:at, lastError:null, balanceLow:null,
+    manualCompletion:{at, previousState:task.state, previousError:task.lastError || null},
+    logs:[...task.logs,{at,level:'warn',message:'用户手动确认本地任务完成；原提交记录保留，允许创建同资源新任务。'}].slice(-200),
+  };
 }

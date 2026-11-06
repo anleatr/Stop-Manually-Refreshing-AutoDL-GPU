@@ -40,7 +40,7 @@ function updateImageForm(){
   }
   // CUDA 不单独显示：新建由第四级镜像带入隐藏字段，克隆随源实例。
   form.elements.cuda.required=create;
-  $('#cuda-hint').textContent=create?'新建时 CUDA 随下方选择的官方镜像带入，宿主驱动需支持它；扩容数据盘可能在关机后继续计费。':'克隆原样复制源实例的系统盘，Python、PyTorch、CUDA 与源实例相同，不需要填写。首次检查时从 AutoDL 克隆页读取源环境 CUDA，只选驱动支持它的主机；读到的版本写在任务日志中。';
+  $('#cuda-hint').textContent=create?'CUDA 随所选镜像确定。':'沿用源实例的 Python、PyTorch 和 CUDA。';
   form.elements.imagePath.required=create;form.elements.imagePath.disabled=!create;
   renderImages();
 }

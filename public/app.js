@@ -21,7 +21,7 @@ async function api(url, data) {
   return result;
 }
 function toast(message,error=false){clearTimeout(toastTimer);const node=$('#toast');node.textContent=message;node.classList.toggle('error',error);node.classList.remove('hidden');toastTimer=setTimeout(()=>node.classList.add('hidden'),6500);}
-function badge(state){const style=['attention','reconciling'].includes(state)?'warning':state==='cancelled'?'neutral':'';return `<span class="badge ${style}">${esc(STATES[state] || state)}</span>`;}
+function badge(state){const style=['attention','reconciling'].includes(state)?'warning':['cancelled','completed','paused','expired','found'].includes(state)?'neutral':'';return `<span class="badge ${style}">${esc(STATES[state] || state)}</span>`;}
 function regions(names=['北京B区']) {
   const all=appState.regions || ['北京B区','西北B区','重庆A区','内蒙B区','北京A区','佛山区'];
   if(currentMode==='clone')names=names.slice(0,1);
@@ -114,12 +114,12 @@ function renderGpuCatalogStatus(){
   const value=$('#task-form').elements.gpuModel.value,key=gpuIdentity(value),clone=currentMode==='clone';
   // 与监测时选型号的规则一致：忽略大小写、空格、横线和下划线。
   const unlisted=!!value&&value!==CUSTOM_GPU_MODEL&&!catalogModels().some(entry=>gpuIdentity(entry.model)===key);
-  const text=gpuSyncing?(gpuSyncAuto?'登录已核验，正在自动刷新各地区的 GPU 型号和空闲数，约需十几秒；只读取页面，不会提交订单。':'正在从 AutoDL 创建页逐个地区读取 GPU 型号，约需十几秒；只读取页面，不会提交订单。')
+  const text=gpuSyncing?(gpuSyncAuto?'正在自动同步 GPU 型号…':'正在同步 GPU 型号…')
     :gpuSyncError?'同步失败：'+gpuSyncError
-    :!catalog?(ready?'型号从 AutoDL 创建页按地区读取。点“同步 AutoDL 型号”后，这里只列出所选地区有的型号。':'登录 AutoDL 并检查登录状态后，点“同步 AutoDL 型号”读取各地区的官方型号。')
-    :'同步于 '+time(catalog.checkedAt,true)+'（'+sinceText(catalog.checkedAt)+'），括号内是当时的空闲/总数，不是实时库存；每次登录核验后自动刷新。'+(issues.length?issues.join('、')+'，可重新同步。':'')
+    :!catalog?(ready?'请同步 GPU 型号。':'登录后自动同步 GPU 型号。')
+    :'同步于 '+time(catalog.checkedAt,true)+' · 型号后为同步时的空闲/总数。'+(issues.length?issues.join('、')+'，可重新同步。':'')
       +(unlisted?(clone?'源实例型号不在该地区的同步列表中，克隆任务可能无法在页面上选中此型号，可重新同步核对。':'所选型号不在所选地区的同步列表中，请核对。'):'')
-      +(clone?'':(picked.length>1?'多选地区时，没有该型号的地区会自动跳过。':'')+'显存或版本变体不在列表中时选“其他型号”。');
+      ;
   const hint=$('#gpu-model-hint');
   if(hint.textContent!==text)hint.textContent=text;
   hint.classList.toggle('error',!!gpuSyncError);
@@ -136,7 +136,7 @@ async function syncGpuCatalog({auto=false}={}){
 // 每次登录核验通过后自动刷新一次型号目录（括号内的空闲/总数），不必手动点同步。
 window.addEventListener('appstatechange',()=>{
   const since=appState.browser?.session?.readySince,catalog=appState.gpuCatalog;
-  if(!window.accountReady?.()||!since||gpuSyncing||gpuAutoFor===since||(catalog&&catalog.checkedAt>=since))return;
+  if(!window.accountReady?.()||!since||instanceAutoFor!==since||accountBusy||gpuSyncing||gpuAutoFor===since||(catalog&&catalog.checkedAt>=since))return;
   gpuAutoFor=since;void syncGpuCatalog({auto:true});
 });
 function updateForm(){
@@ -146,7 +146,8 @@ function updateForm(){
   form.elements.sourceId.required=currentMode==='clone';
   form.elements.imagePath.required=currentMode==='create';
   $('#create-fields').classList.toggle('hidden',currentMode!=='create');$('#clone-fields').classList.toggle('hidden',currentMode!=='clone');
-  $('#submit-task').innerHTML=(execute?'启用真实抢卡':'开始真实库存监测')+' <span>→</span>';
+  $('#live-source-fields').classList.toggle('hidden',currentMode!=='clone');
+  $('#submit-task').textContent='创建任务';
   form.elements.fullScanSeconds.disabled=form.elements.scanScope.value!=='first-page';
   updateGpuSelection();
   window.updateAccountForm?.();
@@ -165,20 +166,25 @@ function renderBrowser(){
   const ready=session.state==='ready'&&session.browserOpen, checking=session.state==='checking';
   const busy=!!browserAction||checking, card=$('#autodl-connection'), badge=$('#browser-session-badge');
   card.dataset.session=session.state;
+  $('#account-name').textContent=ready?(session.accountName||''):'';
+  $('#account-name').classList.toggle('hidden',!ready||!session.accountName);
   badge.textContent=session.label;badge.className='badge'+(ready?'': ['expired','human_required','network_blocked','error','unknown','login_required'].includes(session.state)?' warning':' neutral');
-  if($('#browser-status').textContent!==session.message)$('#browser-status').textContent=session.message;
-  $('#browser-checked-at').textContent=session.checkedAt?'最近核验：'+time(session.checkedAt,true)+' · 仅代表当时状态，任务执行时仍会检查。':'尚未核验；打开浏览器不代表已登录。';
+  const showStatus=['error','unknown','network_blocked','human_required'].includes(session.state);
+  $('#browser-status').textContent=showStatus?session.message:'';
+  $('#browser-status').classList.toggle('hidden',!showStatus);
+  $('#browser-checked-at').textContent=session.checkedAt?'最近核验：'+time(session.checkedAt,true):'尚未核验';
   $('#open-browser').disabled=busy;
+  $('#login-link').classList.toggle('hidden',ready);
   $('#open-browser').textContent=browserAction==='open'?'正在打开…':ready?'打开专用浏览器':['expired','login_required'].includes(session.state)?'重新登录':session.state==='human_required'?'处理人工验证':session.state==='network_blocked'?'重试打开登录':'打开登录';
   $('#check-browser').disabled=busy||!session.browserOpen;
-  $('#check-browser').textContent=browserAction==='check'||checking?'正在检查…':'检查登录状态';
+  $('#check-browser').textContent=browserAction==='check'||checking?'正在检查…':'检查登录';
   $('#logout-browser').disabled=busy||!!appState.browser?.busy;
-  $('#logout-browser').textContent=browserAction==='logout'?'正在退出…':'退出 AutoDL';
+  $('#logout-browser').textContent=browserAction==='logout'?'正在退出…':'退出登录';
   $('#check-browser').title=session.browserOpen?'只读检查，不会租用 GPU':'请先打开专用浏览器';
   $('#browser-busy').classList.toggle('hidden',!appState.browser?.busy||!!browserAction||checking);
-  $('#live-note').textContent=ready?'AutoDL 会话已核验。默认找到空闲 GPU 后自动创建并开机，需勾选费用授权；想先试运行可选“只通知”。不能保证抢到资源。':'请先在“连接 AutoDL”中打开专用浏览器、完成登录并检查状态；显示“会话可用”后才能创建真实任务。';
 }
 function focusLogin(){
+  document.querySelector('[data-view="account"]').click();
   $('#autodl-connection').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
   (appState.browser?.session?.browserOpen?$('#check-browser'):$('#open-browser')).focus({preventScroll:true});
 }
@@ -192,7 +198,7 @@ async function browserCommand(action,data={}){
     if(action==='logout'){initialSettings=false;window.resetAccountState?.();$('#logout-dialog').close();}
     toast(result.message,action==='check'&&result.session?.state!=='ready');
   }catch(error){toast(error.message,true);}
-  finally{browserAction=null;renderBrowser();await refresh();if(action==='logout')window.aiRenderState?.(true);}
+  finally{browserAction=null;renderBrowser();await refresh();}
 }
 function renderTasks(){
   const tasks=appState.tasks;
@@ -201,20 +207,41 @@ function renderTasks(){
   $('#metric-attention').textContent=tasks.filter(t=>['attention','reconciling'].includes(t.state)).length;
   $('#task-count').textContent=tasks.length;
   const html=tasks.length?tasks.map(t=>{
-    const c=t.config,progress=t.state==='completed'?(c.mode==='clone'?(c.copyDataDisk!==false?'数据盘复制完成，目标 GPU 实例已运行':'系统盘克隆完成，目标 GPU 实例已运行（未复制数据盘）'):'目标 GPU 实例已运行'):(t.lastError || t.balanceLow?.message || t.lastProgress || t.lastScan?.summary || '等待资源检查');
-    return `<article class="task-card"><div class="task-top"><h3 title="${esc(c.name)}">${esc(c.name)}</h3>${badge(t.state)}</div><div class="task-meta"><span>${c.mode==='clone'?'迁移克隆':'新建实例'}</span><span>${esc(c.gpuModel)} × ${c.gpuCount}</span><span>${esc(c.regions.join(' / '))}</span><span>${esc(taskCuda(t))}</span></div><div class="task-progress${t.lastError||t.balanceLow?' error':''}">${esc(progress)}</div><div class="task-bottom"><small>检查 ${t.attempts} 次 · ${c.pollSeconds}s 间隔 · ${esc(scanLabel(c))}<br>${t.result?.id?`实例 ${esc(t.result.id)}`:`更新于 ${time(t.updatedAt)}`}</small><div class="task-buttons">${ACTIVE.includes(t.state)?`<button class="text-button" data-command="pause" data-id="${t.id}">暂停</button>`:''}${['paused','attention','found','expired'].includes(t.state)&&(!t.operation||t.operation.receipt)?`<button class="text-button" data-command="resume" data-id="${t.id}">恢复</button>`:''}<button class="text-button" data-detail="${t.id}">详情与日志 ↗</button></div></div></article>`;
+    const c=t.config,progress=t.state==='completed'?'已完成':(t.lastError || t.balanceLow?.message || t.lastProgress || t.lastScan?.summary || '等待资源检查');
+    return `<article class="task-card" data-task-id="${esc(t.id)}" data-active="${ACTIVE.includes(t.state)}"><div class="task-top"><h3 title="${esc(c.name)}">${esc(c.name)}</h3>${badge(t.state)}</div><div class="task-meta"><span>${c.mode==='clone'?'迁移克隆':'新建实例'}</span><span>${esc(c.gpuModel)} × ${c.gpuCount}</span><span>${esc(c.regions.join(' / '))}</span><span>${esc(taskCuda(t))}</span></div><div class="task-progress${t.lastError||t.balanceLow?' error':''}">${esc(progress)}</div><div class="task-bottom"><small>检查 ${t.attempts} 次 · ${c.pollSeconds}s 间隔 · ${esc(scanLabel(c))}<br>${t.result?.id?`实例 ${esc(t.result.id)}`:`更新于 ${time(t.updatedAt)}`}</small><div class="task-buttons">${ACTIVE.includes(t.state)?`<button class="text-button" data-command="pause" data-id="${t.id}">暂停</button>`:''}${['paused','attention','found','expired'].includes(t.state)&&(!t.operation||t.operation.receipt)?`<button class="text-button" data-command="resume" data-id="${t.id}">恢复</button>`:''}<button class="text-button" data-detail="${t.id}">详情与日志 ↗</button>${t.state!=='completed'?`<button class="text-button" data-command="complete" data-id="${t.id}">已完成</button>`:''}<button class="text-button danger" data-command="delete" data-id="${t.id}">删除</button></div></div></article>`;
   }).join(''):`<div class="empty"><div class="empty-icon">◫</div><h3>第一张 GPU，从这里等起</h3><p>配置一个新建或迁移任务。<br>先连接 AutoDL，再建立仅监测或自动执行任务。</p></div>`;
   replaceKeeping($('#tasks'),html);
   renderQueueToggle();
 }
-// 每2秒刷新一次：内容没有变化时不重写，变化时保留滚动位置和键盘焦点所在的按钮。
-function replaceKeeping(node,html){
-  if(node.dataset.html===html)return;
-  const active=node.contains(document.activeElement)?document.activeElement:null;
-  const focusKey=active?.dataset.command?'[data-command="'+active.dataset.command+'"][data-id="'+active.dataset.id+'"]':active?.dataset.detail?'[data-detail="'+active.dataset.detail+'"]':null;
-  const top=node.scrollTop;
-  node.innerHTML=html;node.dataset.html=html;node.scrollTop=top;
-  if(focusKey)node.querySelector(focusKey)?.focus({preventScroll:true});
+// 保留已有任务卡片及未变化的内容，让页面滚动锚点和操作按钮保持稳定。
+function replaceKeeping(node, html) {
+  if (node.dataset.html === html) return;
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const incoming = [...template.content.children];
+  if (!incoming[0]?.dataset.taskId) {
+    node.replaceChildren(template.content);
+  } else {
+    const oldCards = new Map([...node.querySelectorAll(':scope > [data-task-id]')].map(card => [card.dataset.taskId, card]));
+    node.querySelector(':scope > .empty')?.remove();
+    let cursor = node.firstElementChild;
+    for (const next of incoming) {
+      let card = oldCards.get(next.dataset.taskId);
+      if (card) {
+        oldCards.delete(next.dataset.taskId);
+        card.dataset.active = next.dataset.active;
+        for (const selector of ['.task-top h3', '.task-top .badge', '.task-meta', '.task-progress', '.task-bottom small', '.task-buttons']) {
+          const current = card.querySelector(selector), updated = next.querySelector(selector);
+          if (current.innerHTML !== updated.innerHTML) current.innerHTML = updated.innerHTML;
+          if (current.className !== updated.className) current.className = updated.className;
+        }
+      } else card = next;
+      if (card !== cursor) node.insertBefore(card, cursor);
+      cursor = card.nextElementSibling;
+    }
+    for (const card of oldCards.values()) card.remove();
+  }
+  node.dataset.html = html;
 }
 let queueCollapsed=(()=>{try{return localStorage.getItem('queueCollapsed')==='1';}catch{return false;}})();
 function renderQueueToggle(){
@@ -225,10 +252,7 @@ function renderQueueToggle(){
   $('#queue-summary').textContent=queueCollapsed?'已收起：进行中 '+active+' 个，需要处理 '+attention+' 个，其余 '+(tasks.length-active-attention)+' 个。':'无库存时静默等待，关键变化时通知。';
 }
 $('#toggle-queue').addEventListener('click',()=>{queueCollapsed=!queueCollapsed;try{localStorage.setItem('queueCollapsed',queueCollapsed?'1':'0');}catch{}renderQueueToggle();});
-function delivery(n){const values=Object.entries(n.deliveries||{});return values.length?values.map(([key,val])=>`${key==='wechat'?'微信':'Webhook'}：${val.ok?'已发送':`发送失败（${val.error||'等待重试'}）`}`).join(' · '):'已记录本地消息';}
-function renderNotifications(){
-  $('#unread').textContent=appState.notifications.filter(n=>!n.read).length;
-  replaceKeeping($('#notification-list'),appState.notifications.length?appState.notifications.map(n=>`<article class="notification-item"><h3>${!n.read?'<i class="online-dot"></i>':''}${esc(n.name)}<time>${time(n.at,true)}</time></h3><p>${esc(n.message)}</p><small>${esc(delivery(n))}</small></article>`).join(''):`<div class="empty"><div class="empty-icon">♧</div><h3>暂时没有新消息</h3><p>有空卡、执行完成或需要你处理时，会在这里留下消息。</p></div>`);
+function notifyDesktop(){
   if(seenNotifications){for(const n of appState.notifications){if(!seenNotifications.has(n.id)&&'Notification'in window&&Notification.permission==='granted'){new Notification('GPU 候机室 · '+n.name,{body:n.message,tag:n.id,icon:'/favicon.svg'});}seenNotifications.add(n.id);}}
   else seenNotifications=new Set(appState.notifications.map(n=>n.id));
 }
@@ -260,12 +284,22 @@ async function refresh(){
     // 同步刚完成时，同步前发出的轮询结果可能更旧；保留较新的型号目录。
     if(previousCatalog&&!(appState.gpuCatalog?.checkedAt>=previousCatalog.checkedAt))appState.gpuCatalog=previousCatalog;
     $('#connection').textContent='已连接';$('#last-updated').textContent='最后同步 '+time(appState.now);renderServer();renderModelCatalog();renderBrowser();
-    renderTasks();renderNotifications();if(detailId&&$('#task-dialog').open)renderDetail();
+    renderTasks();notifyDesktop();if(detailId&&$('#task-dialog').open)renderDetail();
     if(!initialSettings){initialSettings=true;const form=$('#settings-form');for(const key of Object.keys(appState.settings)){if(form.elements[key]){if(form.elements[key].type==='checkbox')form.elements[key].checked=appState.settings[key];else form.elements[key].value=appState.settings[key];}}}
     window.dispatchEvent(new Event('appstatechange'));
   }catch(e){$('#connection').textContent='已断开';$('#last-updated').textContent='服务未连接，监测可能已经停止';}finally{fetching=false;}
 }
 async function perform(command,id,data={}){
+  if(command==='delete') {
+    const task=appState.tasks.find(t=>t.id===id);
+    if(!task || !confirm('删除此任务并从队列移除？后续检查会停止，云端实例仍需自行管理。'))return;
+    data={confirmed:true,expectedUpdatedAt:task.updatedAt};
+  }
+  if(command==='complete') {
+    const task=appState.tasks.find(t=>t.id===id);
+    if(!task || !confirm('将此任务标记为手动完成，并停止后续监测及核验。已有云端实例仍可能计费；此操作会允许同资源新任务，结果不明时可能重复租用。确认完成？'))return;
+    data={confirmed:true,expectedUpdatedAt:task.updatedAt};
+  }
   if(command==='cancel'&&!confirm('停止后不再检查。云端已创建的实例和磁盘会保留，仍可能计费，需到 AutoDL 管理。继续停止本地任务？'))return;
   if(command==='verify-data'){if(!$('#data-confirmed')?.checked){toast('请先确认已核验目标数据盘的文件完整',true);return;}data.confirmed=true;}
   if(command==='recheck'){if(!confirm('将只读重新读取 AutoDL 实例列表。没有新增实例时清除此次提交记录；有新增实例时保留记录，请核对后绑定。继续？'))return;data.confirmed=true;}
@@ -273,7 +307,7 @@ async function perform(command,id,data={}){
     toast(command==='attach'?'目标实例已绑定':command==='recheck'?(result.result?.cleared?'核对完成：没有新增实例，已清除此次提交记录':'实例列表有提交前没有的实例 '+(result.result?.extra||[]).map(i=>i.id).slice(0,3).join('、')+'，请核对后绑定'):'任务已更新',command==='recheck'&&!result.result?.cleared);
     await refresh();}catch(e){toast(e.message,true);}
 }
-$$('.nav-item').forEach(button=>button.addEventListener('click',()=>{$$('.nav-item').forEach(b=>b.classList.toggle('active',b===button));$$('.view').forEach(v=>v.classList.toggle('hidden',v.id!==button.dataset.view));$('#view-title').textContent={dashboard:'资源监测',notifications:'消息中心',settings:'通知设置',ai:'AI 环境与选卡'}[button.dataset.view];}));
+$$('.nav-item').forEach(button=>button.addEventListener('click',()=>{$$('.nav-item').forEach(b=>b.classList.toggle('active',b===button));$$('.view').forEach(v=>v.classList.toggle('hidden',v.id!==button.dataset.view));$('#view-title').textContent={account:'用户配置',dashboard:'资源监测',queue:'任务队列',settings:'通知设置'}[button.dataset.view];}));
 $$('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
   if(currentMode==='create'&&button.dataset.mode==='clone')window.rememberAccountResource?.();
   currentMode=button.dataset.mode;$$('[data-mode]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',b===button);});
@@ -312,12 +346,15 @@ function showTaskConflict(error, data) {
     :conflict.replaceable?'可以保留当前配置并重建。新配置、源实例及余额校验通过后，旧任务才会停止；原配置和日志继续保留。'
     :conflict.hasOperation?'原任务有一次结果不明的提交。请先到 AutoDL 核对：已创建就在原任务中绑定目标实例；确认没有创建，在原任务中点“重新核对实例列表”清除记录后再新建。停止本地任务不会撤销云端租用，也不会清除提交记录。'
     :'旧任务仍在运行或等待处理。请先查看并暂停原任务，再按当前配置重建。';
+  $('#continue-task').hidden=!error.conflict||!Number.isFinite(conflict.updatedAt);
+  $('#continue-task').disabled=conflictBusy;
   $('#replace-task').hidden=!conflict.replaceable||!error.conflict;
   $('#replace-task').disabled=conflictBusy;
   if(!$('#task-conflict-dialog').open)$('#task-conflict-dialog').showModal();
 }
 async function taskCreated(replaced=false) {
   toast(replaced?'旧任务已停止，新任务已按当前配置建立':'任务已建立，请保持服务与电脑运行');
+  document.querySelector('[data-view=queue]').click();
   await refresh();
 }
 $('#task-form').addEventListener('submit',async e=>{
@@ -361,7 +398,37 @@ $('#logout-browser').addEventListener('click',()=>{$('#logout-clear-credentials'
 $('#logout-cancel').addEventListener('click',()=>$('#logout-dialog').close());
 $('#confirm-logout').addEventListener('click',async()=>{const button=$('#confirm-logout');button.disabled=true;try{await browserCommand('logout',{clearCredentials:$('#logout-clear-credentials').checked});}finally{button.disabled=false;}});
 $('#settings-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));data.rememberCredentials=form.elements.rememberCredentials.checked;data.webhookEnabled=form.elements.webhookEnabled.checked;data.wechatEnabled=form.elements.wechatEnabled.checked;try{const result=await api('/api/notifications/settings',data);initialSettings=false;toast(result.message);await refresh();}catch(error){toast(error.message,true);}});
-$('#read-notifications').addEventListener('click',async()=>{try{await api('/api/notifications/read',{});await refresh();}catch(error){toast(error.message,true);}});
 $('#desktop-notify').addEventListener('click',async()=>{if(!('Notification'in window)){toast('当前浏览器不支持桌面通知，请配置微信或 Webhook',true);return;}const result=await Notification.requestPermission();toast(result==='granted'?'桌面提醒已开启，请保持本页面打开':'未启用桌面通知，站内消息仍会保留');});
 function tickClock(){$('#clock').textContent=new Date().toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});}
 regions();updateForm();renderBrowser();tickClock();void refresh();setInterval(()=>void refresh(),2000);setInterval(tickClock,30000);
+
+$('#go-account').addEventListener('click',focusLogin);
+
+$('#task-form').addEventListener('invalid', event => {
+  if (event.target.closest('#advanced-settings')) $('#advanced-settings').open = true;
+}, true);
+
+document.querySelector('[data-view=queue]').addEventListener('click', () => {
+  window.scrollTo({top:0,left:0,behavior:'instant'});
+});
+
+$('#continue-task').addEventListener('click',async()=>{
+  if(conflictBusy||!pendingConflict)return;
+  const pending=pendingConflict;
+  if(JSON.stringify(taskPayload())!==pending.signature){$('#task-conflict-dialog').close();toast('配置已变化，请按当前配置重新提交',true);return;}
+  if(!confirm('继续会把原任务标记为手动完成，并跳过该任务的重复创建检查。原提交记录保留。新任务可能再次租用 GPU 并产生额外费用，确认继续？'))return;
+  conflictBusy=true;
+  for(const id of ['continue-task','replace-task','conflict-close','conflict-view'])$('#'+id).disabled=true;
+  try {
+    await api('/api/tasks',{...pending.data,completeTaskId:pending.conflict.id,confirmed:true,expectedUpdatedAt:pending.conflict.updatedAt});
+    $('#task-conflict-dialog').close();
+    await taskCreated();
+  } catch(error) {
+    if(error.code==='DUPLICATE')showTaskConflict(error,pending.data);
+    else {$('#conflict-help').textContent=error.message;toast(error.message,true);}
+    await refresh();
+  } finally {
+    conflictBusy=false;
+    for(const id of ['continue-task','replace-task','conflict-close','conflict-view'])$('#'+id).disabled=false;
+  }
+});

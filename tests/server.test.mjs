@@ -11,11 +11,11 @@ import { createApplication, inspectRunningBackend, describeRunningBackend, stopR
 import { normalizeConfig } from '../src/config.mjs';
 import { SyntheticAdapter } from './fixtures/synthetic-adapter.mjs';
 import { seedGpuCatalog } from './fixtures/gpu-catalog.mjs';
-async function localApp(t, aiOptions = {}, options = {}) {
+async function localApp(t, unusedOptions = {}, options = {}) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'autodl-http-isolated-'));
   // 真实账号适配器也是内存合成会话，不能连接平台或产生费用。
   const autodl=Object.assign(new SyntheticAdapter(),{imageOptions:syntheticImageOptions,instances:async(model)=>[{id:'synthetic-source',region:'北京B区',gpuModel:model||'RTX 4090',gpuCount:1,stopped:true,running:false}],sessionStatus:()=>({state:'ready',label:'合成会话，仅测试',message:'未连接真实账号',browserOpen:true,checkedAt:1})});
-  const app=createApplication({runtimeDir:dir,adapters:{autodl},startEngine:false,aiOptions,...options});
+  const app=createApplication({runtimeDir:dir,adapters:{autodl},startEngine:false,...options});
   await new Promise((resolve,reject)=>{app.server.once('error',reject);app.server.listen(0,'127.0.0.1',resolve);});
   const base=`http://127.0.0.1:${app.server.address().port}`;
   t.after(async()=>{await app.close();const resolved=path.resolve(dir);if(!resolved.startsWith(path.resolve(os.tmpdir())+path.sep)||!path.basename(resolved).startsWith('autodl-http-isolated-'))throw Error('invalid test cleanup target');fs.rmSync(resolved,{recursive:true,force:true});});
@@ -48,63 +48,6 @@ test('单进程运行锁拒绝第二实例，关闭后移除且可再次启动',
   const f=await localApp(t);assert.throws(()=>createApplication({runtimeDir:f.dir,startEngine:false}),/已有服务/);await f.app.close();assert.equal(fs.existsSync(path.join(f.dir,'server.lock')),false);
   const second=createApplication({runtimeDir:f.dir,startEngine:false});await second.close();assert.equal(fs.existsSync(path.join(f.dir,'server.lock')),false);
 });
-
-const AI_TEST_KEY = 'sk-http-synthetic-not-real-123456789';
-const AI_TEST_INPUT = { consent: true, mode: 'plan', request: '请分析4090环境需求', projectText: 'torch==2.1.0', errorText: '' };
-const AI_TEST_RESULT = { summary: '需要核验环境', findings: [{ message: '项目指定torch', evidence: 'torch==2.1.0' }],
-  recommendations: [{ action: '核对依赖', reason: '尚未验证', verification: '在目标实例运行最小检查' }], questions: [], warnings: ['仅供建议'], paidConsent: true };
-test('AI接口要求本地令牌及同源，未启用时核心任务仍可建立', async t => {
-  let calls = 0; const f = await localApp(t, { fetchImpl: async () => { calls++; throw Error('不应调用'); } });
-  assert.equal((await fetch(f.base + '/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
-  assert.equal((await fetch(f.base + '/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': f.app.token, Origin: 'https://untrusted.example.test' }, body: '{}' })).status, 403);
-  const result = await f.request('/api/ai/analyze', AI_TEST_INPUT); assert.equal(result.status, 409);
-  assert.equal((await result.json()).error, 'AI_DISABLED');
-  assert.equal((await f.request('/api/tasks', { provider: 'autodl', gpuModel: 'RTX 4090', mode: 'clone' })).status, 201); assert.equal(calls, 0);
-  assert.equal((await fetch(f.base + '/ai.js')).status, 200);
-});
-test('HTTP配置及状态均不回显AI Key，默认不写磁盘，保存不触发分析', async t => {
-  let calls = 0; const f = await localApp(t, { fetchImpl: async () => { calls++; } });
-  const saved = await f.request('/api/ai/settings', { enabled: true, apiKey: AI_TEST_KEY }); assert.equal(saved.status, 200);
-  assert.equal((await saved.text()).includes(AI_TEST_KEY), false);
-  const state = await (await f.request('/api/state')).json(); assert.equal(state.ai.ready, true); assert.equal(state.ai.hasKey, true);
-  assert.equal(state.aiProviders.length, 3); assert.equal(JSON.stringify(state).includes(AI_TEST_KEY), false);
-  assert.equal(fs.readFileSync(path.join(f.dir, 'state.json'), 'utf8').includes(AI_TEST_KEY), false); assert.equal(calls, 0);
-});
-test('AI设置与通知设置分别持久化，更新通知不会丢失已记住的模型配置', async t => {
-  const f = await localApp(t); await f.request('/api/ai/settings', { enabled: true, apiKey: AI_TEST_KEY, rememberKey: true });
-  await f.request('/api/notifications/settings', { wechatEnabled: true, wechatToken: 'synthetic-wechat-private-token' });
-  const state = await (await f.request('/api/state')).json(); assert.equal(state.ai.ready, true); assert.equal(state.settings.wechatEnabled, true);
-  assert.equal(JSON.stringify(state).includes(AI_TEST_KEY), false); assert.equal(JSON.stringify(state).includes('synthetic-wechat-private-token'), false);
-  await f.request('/api/ai/clear-key', {});
-  assert.equal(fs.readFileSync(path.join(f.dir, 'state.json'), 'utf8').includes(AI_TEST_KEY), false);
-  assert.equal(f.app.store.data.settings.wechatToken, 'synthetic-wechat-private-token');
-});
-test('HTTP分析只返回建议与匹配证据，不创建任务或接受模型费用授权', async t => {
-  let calls = 0; const f = await localApp(t, { fetchImpl: async () => { calls++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(AI_TEST_RESULT) } }] })); } });
-  await f.request('/api/ai/settings', { enabled: true, apiKey: AI_TEST_KEY });
-  const noConsent = await f.request('/api/ai/analyze', { ...AI_TEST_INPUT, consent: false }); assert.equal(noConsent.status, 400); assert.equal(calls, 0);
-  const result = await f.request('/api/ai/analyze', AI_TEST_INPUT); assert.equal(result.status, 200); const data = await result.json();
-  assert.equal(data.result.findings[0].evidenceMatched, true); assert.equal(data.result.paidConsent, undefined);
-  assert.equal(data.meta.automaticExecution, false); assert.equal(f.app.store.tasks().length, 0); assert.equal(calls, 1);
-});
-test('HTTP模型鉴权失败不泄露Key，失败后仍可建立和暂停核心任务', async t => {
-  const f = await localApp(t, { fetchImpl: async () => new Response('upstream key=' + AI_TEST_KEY, { status: 401 }) });
-  await f.request('/api/ai/settings', { enabled: true, apiKey: AI_TEST_KEY }); const failed = await f.request('/api/ai/analyze', AI_TEST_INPUT);
-  assert.equal(failed.status, 502); const error = await failed.json(); assert.equal(error.error, 'AI_AUTH'); assert.equal(JSON.stringify(error).includes(AI_TEST_KEY), false);
-  const { task } = await (await f.request('/api/tasks', { provider: 'autodl', gpuModel: 'RTX 4090' })).json();
-  assert.equal((await f.request('/api/tasks/' + task.id + '/pause', {})).status, 200);
-});
-test('HTTP分析等待期间核心接口可用，取消AI不会暂停或取消核心任务', async t => {
-  let entered; const entry = new Promise(resolve => { entered = resolve; });
-  const f = await localApp(t, { fetchImpl: async (_url, { signal }) => { entered(); return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Error('aborted')), { once: true })); } });
-  await f.request('/api/ai/settings', { enabled: true, apiKey: AI_TEST_KEY }); const pending = f.request('/api/ai/analyze', AI_TEST_INPUT); await entry;
-  const { task } = await (await f.request('/api/tasks', { provider: 'autodl', gpuModel: 'RTX 4090', mode: 'clone' })).json();
-  assert.equal((await f.request('/api/state')).status, 200);
-  assert.equal((await f.request('/api/ai/cancel', {})).status, 200); const cancelled = await pending;
-  assert.equal(cancelled.status, 409); assert.equal((await cancelled.json()).error, 'AI_CANCELLED');
-  assert.equal(f.app.store.get(task.id).state, 'queued');
-});
-
 
 test('所有任务均需先核验登录，不存在演练绕过入口', async t => {
   const f = await localApp(t);
@@ -426,48 +369,6 @@ test('运行锁释放判断：文件不在、换了进程或记录的进程已�
   assert.equal(lockReleased(lockPath,exited),true);
 });
 // ---- 环境与选卡规划接口：合成目录与合成镜像菜单，不连接平台、不调用真实模型 ----
-const PLAN_TEXT = 'pip install torch==2.1.0+cu121\nVicuna-7B requires around 14GB of GPU memory. Vicuna-13B requires around 28GB of GPU memory.';
-test('规划接口需要本地令牌；只用规则时不调用模型、不创建任务，返回约束、型号结论与草稿',async t=>{
-  let calls=0;const f=await localApp(t,{fetchImpl:async()=>{calls++;throw Error('不应调用');}});seedGpuCatalog(f.app.store);
-  assert.equal((await fetch(f.base+'/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectText:PLAN_TEXT})})).status,403);
-  assert.equal((await f.request('/api/plan',{})).status,400);
-  const r=await f.request('/api/plan',{projectText:PLAN_TEXT});assert.equal(r.status,200);const plan=await r.json();
-  assert.equal(plan.model,null);assert.equal(calls,0);assert.equal(f.app.store.tasks().length,0);assert.equal(plan.automaticExecution,false);
-  assert.ok(plan.constraints.some(row=>row.key==='vramGB'&&row.ambiguous));
-  // 资料中有 14GB 与 28GB 两个显存数字：按最大的 28GB 判断，24GB 的卡不满足；满足的卡中 L20 空闲最多
-  assert.equal(plan.vramNeed.basis,'max');assert.equal(plan.vramNeed.gb,28);assert.match(plan.notices[0],/最大的 28GB/);
-  assert.equal(plan.draft.gpuModel,'L20');assert.deepEqual(plan.draft.regions,['北京B区','重庆A区']);assert.equal(plan.draft.imageHint.cuda,'==12.1');
-  assert.equal(plan.gpus.find(g=>g.model==='RTX 4090').status,'excluded');
-  const unknown=await (await f.request('/api/plan',{projectText:'pip install torch==2.1.0+cu121'})).json();
-  assert.equal(unknown.draft,null);assert.match(unknown.notices[0],/没有读出显存要求/);assert.ok(unknown.gpus.every(g=>g.status!=='ok'));
-  const sized=await (await f.request('/api/plan',{request:'部署27b模型',projectText:''})).json();
-  assert.equal(sized.vramNeed.gb,65);assert.equal(sized.gpus.find(g=>g.model==='A100 80GB').status,'ok');assert.equal(sized.gpus.find(g=>g.model==='L20').status,'excluded');
-  assert.equal((await f.request('/api/plan',{projectText:PLAN_TEXT,useModel:true})).status,400);
-  const off=await (await f.request('/api/plan',{projectText:PLAN_TEXT,useModel:true,consent:true})).json();
-  assert.equal(off.model.code,'AI_DISABLED');assert.ok(off.gpus.length>0);
-});
-test('规划接口：模型按需求选出显存后排除显存不足的型号；引用不符的条目被丢弃并返回原因',async t=>{
-  const reply={items:[{field:'vramGB',value:'28',evidence:'Vicuna-13B requires around 28GB of GPU memory.'},{field:'cuda',value:'==11.8',evidence:'需要 CUDA 11.8'}],summary:'按 13B 推理'};
-  const f=await localApp(t,{fetchImpl:async(url,options)=>{assert.equal(url,'https://api.deepseek.com/chat/completions');assert.equal(options.headers.Authorization,'Bearer '+AI_TEST_KEY);
-    return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(reply)},finish_reason:'stop'}]}));}});seedGpuCatalog(f.app.store);
-  await f.request('/api/ai/settings',{enabled:true,apiKey:AI_TEST_KEY});
-  const plan=await (await f.request('/api/plan',{request:'推理 Vicuna-13B',projectText:PLAN_TEXT,useModel:true,consent:true})).json();
-  assert.equal(plan.model.accepted,1);assert.equal(plan.model.rejected[0].reason,'引用不是输入资料中的原文');
-  const status=Object.fromEntries(plan.gpus.map(g=>[g.model,g.status]));
-  assert.equal(status['RTX 4090'],'excluded');assert.equal(status['L20'],'warn');assert.equal(status['A100'],'check');
-  assert.match(plan.gpus.find(g=>g.model==='L20').reasons.join(' '),/显存要求来自模型补充/);
-  assert.ok(plan.constraints.some(row=>row.key==='vramGB'&&row.source==='model'&&row.value==='≥ 28GB'));
-});
-test('规划镜像接口只读官方菜单并逐级选择，会话不可用时拒绝',async t=>{
-  const f=await localApp(t);
-  const r=await f.request('/api/plan/image',{hint:{framework:'PyTorch',torch:'==2.1.0',cuda:'==12.1',minCuda:'11.3'}});assert.equal(r.status,200);
-  const body=await r.json();assert.deepEqual(body.path,['PyTorch','2.1.0','3.10(ubuntu22.04)','12.1']);assert.equal(body.complete,true);assert.equal(body.levels.length,4);
-  const stuck=await (await f.request('/api/plan/image',{hint:{framework:'PyTorch',torch:'==2.1.0',minTorch:'2.7'}})).json();
-  assert.equal(stuck.complete,false);assert.match(stuck.levels[1].reason,/Miniconda/);
-  assert.equal((await f.request('/api/plan/image',{hint:{torch:'rm -rf'}})).status,400);
-  f.app.adapters.autodl.sessionStatus=()=>({state:'expired',browserOpen:true});
-  assert.equal((await f.request('/api/plan/image',{hint:{}})).status,409);assert.equal(f.app.store.tasks().length,0);
-});
 test('控制台响应带 Cross-Origin-Opener-Policy；接管失效运行锁时锁文件已被别的进程改写就退出',async t=>{
   const f=await localApp(t);const home=await fetch(f.base);assert.equal(home.headers.get('cross-origin-opener-policy'),'same-origin');await home.text();
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'autodl-lock-isolated-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -476,4 +377,13 @@ test('控制台响应带 Cross-Origin-Opener-Policy；接管失效运行锁时�
   fs.readFileSync=function(p,...rest){if(String(p)===lockPath&&++reads===2)return '424242';return original.call(this,p,...rest);};
   try{assert.throws(()=>createApplication({runtimeDir:dir,startEngine:false}),/另一个进程接管/);}finally{fs.readFileSync=original;}
   assert.equal(original(lockPath,'utf8'),'999999');
+});
+
+test('已移除的 AI 页面、脚本和接口不可访问，普通任务仍可建立',async t=>{
+  const f=await localApp(t);
+  for(const url of ['/ai.js','/plan.js']) assert.equal((await fetch(f.base+url)).status,404);
+  for(const url of ['/api/ai/settings','/api/ai/analyze','/api/ai/clear-key','/api/ai/cancel','/api/plan','/api/plan/image'])
+    assert.equal((await f.request(url,{})).status,404);
+  const state=await(await f.request('/api/state')).json();assert.equal('ai' in state,false);assert.equal('aiProviders' in state,false);
+  assert.equal((await f.request('/api/tasks',{provider:'autodl',gpuModel:'RTX 4090'})).status,201);
 });

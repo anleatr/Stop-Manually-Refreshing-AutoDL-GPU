@@ -18,8 +18,6 @@ import { validateCloneSource, publicInstance } from './instances.mjs';
 import { AppError, redact, messageOf, fail } from './errors.mjs';
 import { assertLocalRequest } from './local-access.mjs';
 import { AutoDLBrowserAdapter } from './adapters/autodl.mjs';
-import { AiAssistant, AI_PROVIDERS } from './ai.mjs';
-import { normalizePlanInput, extractConstraints, mergeConstraints, buildPlan, normalizeImageHint, pickImageOption } from './env-plan.mjs';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 启动时发现运行锁被占用：查询已在运行的后台属于哪种情况。令牌只用于本机停止请求，不返回、不打印。
 export async function inspectRunningBackend(port, { fetchImpl = fetch } = {}) {
@@ -96,8 +94,8 @@ export function codeFingerprint(root = ROOT) {
   return createHash('sha256').update(files.sort().join('\n')).digest('hex').slice(0, 16);
 }
 export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR || path.join(ROOT,'.runtime'),
-  adapters: suppliedAdapters, startEngine = true, lock = true, aiOptions = {}, walletOptions = {}, secretProtector,
-  onStop = null, fingerprint = codeFingerprint, imageBusyWaitMs = 20000 } = {}) {
+  adapters: suppliedAdapters, startEngine = true, lock = true, walletOptions = {}, secretProtector,
+  desktopSession = false, onStop = null, fingerprint = codeFingerprint, imageBusyWaitMs = 20000 } = {}) {
   fs.mkdirSync(runtimeDir, {recursive:true,mode:0o700});
   const lockPath = path.join(runtimeDir,'server.lock');
   if (lock) {
@@ -123,7 +121,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
   };
   let store;
   try { store = new Store(runtimeDir,{secretProtector}); } catch (error) { releaseLock(); throw error; }
-  const adapters = suppliedAdapters || {autodl:new AutoDLBrowserAdapter(runtimeDir)};
+  const adapters = suppliedAdapters || {autodl:new AutoDLBrowserAdapter(runtimeDir, { desktopSession })};
   const wallet = new Wallet({...walletOptions,store});
   const notifier = new Notifier(store), engine = new Engine(store,adapters,notifier,{wallet});
   let pricePreview = null;
@@ -140,13 +138,13 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
     engine.busy=true;
     try { return await work(); } finally { engine.busy=false; }
   }
-  function checkTaskSlot(config, replaceTaskId = null) {
+  function checkTaskSlot(config, replaceTaskId = null, completes = null) {
     const replaces = replaceTaskId ? store.get(replaceTaskId) : null;
     if (replaces && (!sameTaskResource(replaces, config) || !canReplaceTask(replaces))) {
       if (blocksTask(replaces, config)) throw conflictError(replaces);
       fail('TASK_CHANGED', '旧任务状态已变化或与当前资源不匹配，请重新检查后再重建', { status: 409 });
     }
-    const duplicate = store.tasks().find(t => t !== replaces && blocksTask(t, config));
+    const duplicate = store.tasks().find(t => t !== replaces && t !== completes && blocksTask(t, config));
     if (duplicate) throw conflictError(duplicate);
     return replaces;
   }
@@ -162,7 +160,6 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
       throw error;
     }
   }
-  const ai = new AiAssistant(store, aiOptions);
   const token = randomBytes(32).toString('hex');
   const startedAt = Date.now(), startCode = fingerprint();
   let codeCheck = { at: 0, changed: false };
@@ -197,7 +194,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
           browser:{status:adapters.autodl.lastStatus || '会话不可用',busy:engine.busy,
             session:adapters.autodl.sessionStatus?.() || {state:'unavailable',label:'会话不可用',message:'请打开专用浏览器并核验登录',checkedAt:null,browserOpen:false}},
           autodlInstances: adapters.autodl.sessionStatus?.()?.state === 'ready' ? instanceSync : {instances:[],checkedAt:null,error:null},
-          wallet:wallet.publicState(),credentialStorage:store.secretStorage.publicState(),regions:REGIONS,gpuCatalog:normalizeGpuCatalog(store.data.gpuCatalog),ai:ai.publicState(),aiProviders:AI_PROVIDERS,server:serverState(),now:Date.now()});
+          wallet:wallet.publicState(),credentialStorage:store.secretStorage.publicState(),regions:REGIONS,gpuCatalog:normalizeGpuCatalog(store.data.gpuCatalog),server:serverState(),now:Date.now()});
         if(req.method !== 'POST') fail('METHOD','不支持的请求方法',{status:405});
         if(!(req.headers['content-type'] || '').startsWith('application/json')) fail('CONTENT_TYPE','控制请求需使用 JSON',{status:415});
         const data = await body(req);
@@ -209,44 +206,6 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
           res.once('close',()=>setImmediate(onStop));res.setHeader('Connection','close');
           json(res,202,{ok:true,message:'后台正在停止：等待当前页面操作结束后关闭专用浏览器；云端实例不受影响'});
           return;
-        }
-        if(url.pathname === '/api/ai/settings') return json(res,200,{ok:true,ai:ai.saveSettings(data)});
-        if(url.pathname === '/api/ai/clear-key') return json(res,200,{ok:true,ai:ai.clearKey()});
-        if(url.pathname === '/api/ai/cancel') { ai.cancel(); return json(res,200,{ok:true}); }
-        if(url.pathname === '/api/ai/analyze') return json(res,200,await ai.analyze(data));
-        // 环境与选卡规划：规则部分在本机完成、不调用模型；勾选模型时由模型补充，模型失败仍返回规则结果。不创建或修改任务。
-        if(url.pathname === '/api/plan') {
-          const input = normalizePlanInput(data), text = input.request + '\n' + input.projectText;
-          const rules = extractConstraints(text, { request: input.request });
-          let model = null, constraints = rules;
-          if (input.useModel) {
-            try {
-              const out = await ai.extract(input);
-              constraints = mergeConstraints(rules, out.accepted);
-              model = { accepted: out.accepted.length, rejected: out.rejected, summary: out.summary, meta: out.meta };
-            } catch (error) {
-              if (!(error instanceof AppError)) throw error;
-              model = { error: redact(messageOf(error)), code: error.code };
-            }
-          }
-          return json(res,200,{ ...buildPlan(constraints, normalizeGpuCatalog(store.data.gpuCatalog), { gpuCount: input.gpuCount }), model,
-            advisoryOnly: true, automaticExecution: false });
-        }
-        // 按规划结果在 AutoDL 官方镜像菜单中逐级选择（只读菜单），返回每级选项供页面填入；不提交任何任务。
-        if(url.pathname === '/api/plan/image') {
-          const hint = normalizeImageHint(data.hint);
-          return json(res,200,await browserWork(async()=>{
-            requireSession();
-            if(typeof adapters.autodl.imageOptions !== 'function')fail('IMAGES','当前适配器不支持官方基础镜像同步，请更新后台');
-            const path = [], levels = [];
-            for (let level = 0; level < 4; level++) {
-              const menu = await adapters.autodl.imageOptions(path), pick = pickImageOption(level, menu.options, hint);
-              levels.push({ level, options: menu.options, label: pick.label, reason: pick.reason });
-              if (!pick.label) break;
-              path.push(pick.label);
-            }
-            return { path, complete: path.length === 4, levels, checkedAt: Date.now() };
-          },{waitMs:imageBusyWaitMs}));
         }
         if(url.pathname === '/api/wallet/token') {
           wallet.setToken(data.token,{rememberToken:data.rememberToken ?? false}); await wallet.refresh({force:true});
@@ -294,7 +253,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
             instanceSync={instances:[],checkedAt:null,error:null};pricePreview=null;
             const result=await adapters.autodl.logout();
             if(data.clearCredentials===true) {
-              ai.clearKey();wallet.clearToken();
+              delete store.data.aiSettings;wallet.clearToken();
               store.data.settings={webhookEnabled:false,wechatEnabled:false,rememberCredentials:false};store.save();
             }
             return {...result,paused,credentialsCleared:data.clearCredentials===true};
@@ -309,10 +268,20 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
           const config = normalizeConfig(data), replaceTaskId = data.replaceTaskId ?? null;
           if (replaceTaskId !== null && (typeof replaceTaskId !== 'string' || !/^[\w-]{1,80}$/.test(replaceTaskId)))
             fail('CONFIG', '替换任务 ID 无效');
+          const completesId = data.completeTaskId ?? null;
+          if (completesId !== null && (replaceTaskId || typeof completesId !== 'string' || data.confirmed !== true || !Number.isFinite(data.expectedUpdatedAt)))
+            fail('CONFIRM','请明确确认人工完成原任务并继续创建',{status:400});
+          const confirmedTask = () => {
+            if (!completesId) return null;
+            const old = store.get(completesId);
+            if (old.state === 'completed' || old.updatedAt !== data.expectedUpdatedAt || !sameTaskResource(old,config))
+              fail('TASK_CHANGED','原任务已变化，请查看最新状态后重新确认',{status:409});
+            return old;
+          };
           const create = async () => {
             requireSession();
-            if(store.tasks().length>=500) fail('LIMIT','任务数量已达500，请备份状态并更换运行目录');
-            checkTaskSlot(config, replaceTaskId);
+            if(store.tasks().filter(task=>!task.deletedAt).length>=500) fail('LIMIT','任务数量已达500，请备份状态并更换运行目录');
+            checkTaskSlot(config, replaceTaskId, confirmedTask());
             if (config.provider === 'autodl' && config.mode === 'clone') {
               const rows=await readInstances(config.gpuModel);
               validateCloneSource(config,rows.find(i=>i.id===config.sourceId));
@@ -334,8 +303,9 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
               else balanceCheck = await wallet.check(config,null,{force:true});
             }
             // 源实例/余额查询期间可能有暂停或恢复请求；落盘前再次校验旧任务状态。
-            const replaces = checkTaskSlot(config, replaceTaskId);
-            return store.create(config, { balanceCheck, replaces });
+            const completes = confirmedTask();
+            const replaces = checkTaskSlot(config, replaceTaskId, completes);
+            return store.create(config, { balanceCheck, replaces, completes });
           };
           const task=await browserWork(create);
           return json(res,201,{task});
@@ -344,9 +314,6 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
           const previous=store.data.settings;store.data.settings=normalizeNotifications(data,previous);
           try {store.save();} catch(error) {store.data.settings=previous;throw error;}
           return json(res,200,{ok:true,message:'已保存。外部渠道仅在任务发现资源、完成、失败或需处理时发送通知'});
-        }
-        if(url.pathname === '/api/notifications/read') {
-          store.data.notifications.forEach(n=>n.read=true);store.save();return json(res,200,{ok:true});
         }
         if(['/api/browser/open','/api/browser/check'].includes(url.pathname)) {
           if(engine.busy || engine.stopping) fail('BUSY','正在执行页面操作，请稍后重试；如持续忙碌，请先暂停真实任务，不会打断正在进行的提交',{status:409});
@@ -358,10 +325,27 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
             return json(res,200,await adapters.autodl[method]());
           } finally {engine.busy=false;}
         }
-        const matched = url.pathname.match(/^\/api\/tasks\/([\w-]+)\/(pause|resume|cancel|attach|verify-data|recheck)$/);
+        const matched = url.pathname.match(/^\/api\/tasks\/([\w-]+)\/(pause|resume|cancel|attach|verify-data|recheck|complete|delete)$/);
         if(matched) {
           const task=store.get(matched[1]);
-          if(matched[2] === 'attach') await engine.attach(task,data.instanceId);
+          if (task.deletedAt && matched[2] !== 'delete') fail('NOT_FOUND','任务已删除',{status:404});
+          if(matched[2] === 'delete') {
+            if (data.confirmed !== true || !Number.isFinite(data.expectedUpdatedAt)) fail('CONFIRM','请确认删除任务',{status:400});
+            await browserWork(() => {
+              if(task.deletedAt) return;
+              if(task.updatedAt !== data.expectedUpdatedAt) fail('TASK_CHANGED','任务状态已变化，请刷新后再删除',{status:409});
+              store.deleteTask(task);
+            });
+          }
+          else if(matched[2] === 'complete') {
+            if (data.confirmed !== true || !Number.isFinite(data.expectedUpdatedAt)) fail('CONFIRM','请明确确认手动完成任务',{status:400});
+            await browserWork(() => {
+              if (task.state === 'completed') return;
+              if (task.updatedAt !== data.expectedUpdatedAt) fail('TASK_CHANGED','任务状态已变化，请刷新后重新确认',{status:409});
+              store.completeManually(task);
+            });
+          }
+          else if(matched[2] === 'attach') await engine.attach(task,data.instanceId);
           else if(matched[2] === 'recheck') {
             if(data.confirmed !== true) fail('CONFIRM','请确认已了解：仅在完整实例列表没有新增实例时才清除提交记录',{status:400});
             requireSession();
@@ -379,7 +363,7 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
         fail('NOT_FOUND','接口不存在',{status:404});
       }
       if(req.method!=='GET') fail('METHOD','不支持的请求方法',{status:405});
-      const assets = {'/':'index.html','/index.html':'index.html','/app.js':'app.js','/account.js':'account.js','/images.js':'images.js','/ai.js':'ai.js','/plan.js':'plan.js','/style.css':'style.css','/favicon.svg':'favicon.svg'};
+      const assets = {'/':'index.html','/index.html':'index.html','/app.js':'app.js','/account.js':'account.js','/images.js':'images.js','/style.css':'style.css','/favicon.svg':'favicon.svg'};
       const asset=assets[url.pathname];
       if(!asset) fail('NOT_FOUND','页面不存在',{status:404});
       const contentType=asset.endsWith('.css')?'text/css':asset.endsWith('.js')?'text/javascript':asset.endsWith('.svg')?'image/svg+xml':'text/html';
@@ -395,9 +379,9 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
   });
   if(startEngine) engine.start();
   let closing;
-  return {server,store,engine,adapters,ai,wallet,token,close(){
+  return {server,store,engine,adapters,wallet,token,close(){
     if (!closing) closing = (async () => {
-      ai.close(); wallet.close();
+      wallet.close();
       const closed = new Promise(resolve => server.close(resolve));
       try {
         await engine.stop(); await notifier.stop();

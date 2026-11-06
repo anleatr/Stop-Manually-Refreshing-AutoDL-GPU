@@ -11,3 +11,21 @@ docs/NEXT_AGENT_PROMPT.md
 # 可能含真实账号信息的截图
 docs/checkbox-error-20261029.png
 docs/monitor-dashboard.jpg
+/desktop/out/
+
+# Build products and local development state
+/dist/
+/out/
+/coverage/
+/test-results/
+/playwright-report/
+*.exe
+*.msi
+*.blockmap
+*.asar
+*.zip
+*.7z
+*.tmp
+*.tsbuildinfo
+.env.*
+!.env.example

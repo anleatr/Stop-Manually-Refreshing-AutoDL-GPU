@@ -54,7 +54,7 @@ try {
   });
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base); await page.waitForFunction(() => document.querySelector('#connection').textContent === '已连接');
-  await page.locator('#task-form [name=gpuModel]').selectOption('RTX 4090');
+  await page.locator('[data-view=dashboard]').click();await page.locator('#task-form [name=gpuModel]').selectOption('RTX 4090');
   assert.equal(await page.locator('#browser-session-badge').textContent(), '未打开登录');
   assert.equal(await page.locator('#check-browser').isDisabled(), true);
   assert.equal(checks, 0); assert.equal(opens, 0);
@@ -63,7 +63,7 @@ try {
   assert.equal(await page.locator('#task-form').evaluate(form => form.checkValidity()), false);
   await page.locator('#task-form [name=action]').selectOption('observe');
 
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('请先登录 AutoDL'));
   assert.equal(app.store.tasks().length, 0);
   assert.equal(await page.evaluate(() => document.activeElement.id), 'open-browser');
@@ -74,7 +74,7 @@ try {
   assert.equal(await page.locator('#connection').textContent(), '已连接');
 
   async function checkState(state, label) {
-    nextState = state; await page.locator('#check-browser').click();
+    nextState = state; await page.locator('[data-view=account]').click();await page.locator('#check-browser').click();
     await page.waitForFunction(expected => document.querySelector('#browser-session-badge').textContent === expected, label);
     assert.equal(await page.locator('#connection').textContent(), '已连接');
     assert.equal(await page.locator('#check-browser').isEnabled(), true);
@@ -101,13 +101,13 @@ try {
   await page.waitForFunction(() => document.querySelector('#browser-session-badge').textContent === '会话可用');
   assert.match(await page.locator('#browser-checked-at').textContent(), /最近核验/);
   assert.equal(await page.locator('#open-browser').textContent(), '打开专用浏览器');
-  await selectSyntheticImage(page);
+  await page.locator('[data-view=dashboard]').click();await selectSyntheticImage(page);
   await page.locator('#task-form [name=name]').fill('合成测试：登录核验后建立的仅监测任务');
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '1');
   assert.equal(app.store.tasks()[0].state, 'queued'); assert.equal(app.store.tasks()[0].attempts, 0);
   await checkState('expired', '登录已失效');
-  await page.locator('#submit-task').click();
+  await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('请先登录 AutoDL'));
   assert.equal(app.store.tasks().length, 1);
   await checkState('ready', '会话可用');
@@ -153,21 +153,22 @@ try {
 
   for (const width of [1440, 1280, 1024, 768, 760, 600, 520, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
-    for (const view of ['dashboard','notifications','ai','settings']) {
+    for (const view of ['account','dashboard','queue','settings']) {
       await page.locator(`[data-view=${view}]`).click();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
       assert.equal(overflow, false, `horizontal overflow: ${width}px ${view}`);
     }
   }
   await page.locator('[data-view=dashboard]').click();
+  await page.locator('[data-view=account]').click();
   // 截图等待提示自然消失，不改变正常交互时的提示时长。
   await page.locator('#toast').waitFor({ state: 'hidden', timeout: 10000 });
   await page.setViewportSize({ width: 1440, height: 1080 });
-  await page.locator('#autodl-connection').screenshot({ path: path.join(root, 'docs', 'autodl-login.png') });
-  await page.screenshot({ path: path.join(root, 'docs', 'dashboard-light.png'), fullPage: true });
+  await page.locator('#autodl-connection').screenshot({ path: path.join(dir, 'autodl-login.png') });
+  await page.screenshot({ path: path.join(dir, 'dashboard-light.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('#autodl-connection').screenshot({ path: path.join(root, 'docs', 'autodl-login-mobile.png') });
-  await page.screenshot({ path: path.join(root, 'docs', 'dashboard-mobile.png'), fullPage: true });
+  await page.locator('#autodl-connection').screenshot({ path: path.join(dir, 'autodl-login-mobile.png') });
+  await page.screenshot({ path: path.join(dir, 'dashboard-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []); assert.deepEqual(blocked, []);
   console.log('登录页面回归通过：未打开/待检查/未登录/人工验证/无法确认/网络错误/可用/失效、重复点击防护、真实任务前置检查、空实例列表与隐藏登录DOM、人工验证与合成输入保留、36组响应式布局。所有会话及任务为合成数据，无AutoDL、模型或外部通知请求。');
 } finally {

@@ -62,3 +62,13 @@ export async function readSessionSnapshot(page) {
   const url = new URL(page.url());
   return { ...signals, url: `${url.origin}${url.pathname}${url.hash.split('?')[0]}` };
 }
+
+// AutoDL 官方导航栏 user-info 组件的显示名，仅读取可见文字。
+export async function readAccountName(page) {
+  return page.evaluate(() => {
+    const arrow = document.querySelector('.navigator .user-info .icon-mianxingxiala');
+    const name = arrow?.parentElement?.querySelector(':scope > span');
+    if (!name || !name.getClientRects().length) return null;
+    return name.textContent.trim() || null;
+  });
+}

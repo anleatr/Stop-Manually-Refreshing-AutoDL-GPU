@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fail } from './errors.mjs';
 import { SecretStorage } from './credentials.mjs';
-import { canReplaceTask, sameTaskResource } from './task-conflicts.mjs';
+import { canReplaceTask, sameTaskResource, manualCompletionPatch } from './task-conflicts.mjs';
 import { carryRejections, activeCooldowns } from './host-cooldown.mjs';
 export class Store {
   constructor(dir, { clock = () => Date.now(), secretProtector } = {}) {
@@ -48,10 +48,13 @@ export class Store {
   }
   tasks() { return this.data.tasks; }
   get(id) { const task = this.data.tasks.find(t => t.id === id); if (!task) fail('NOT_FOUND', '任务不存在', { status: 404 }); return task; }
-  create(config, { balanceCheck = null, replaces = null } = {}) {
+  create(config, { balanceCheck = null, replaces = null, completes = null } = {}) {
     if (replaces && (!this.data.tasks.includes(replaces) || !canReplaceTask(replaces) || !sameTaskResource(replaces, config)))
       fail('TASK_CHANGED', '旧任务状态已变化，请重新检查后再重建', { status: 409 });
-    const now = this.clock(), previous = replaces ? { ...replaces } : null;
+    if (completes && (replaces || !this.data.tasks.includes(completes) || completes.state === 'completed' || !sameTaskResource(completes,config)))
+      fail('TASK_CHANGED','原任务状态已变化，请重新确认',{status:409});
+    const oldTask = replaces || completes;
+    const now = this.clock(), previous = oldTask ? { ...oldTask } : null;
     const task = {
       id: randomUUID(), config, state: 'queued', createdAt: now, updatedAt: now,
       deadlineAt: now + config.timeoutMinutes * 60000, nextCheckAt: now,
@@ -64,13 +67,45 @@ export class Store {
       state: 'cancelled', updatedAt: now, replacedBy: task.id,
       logs: [...replaces.logs, { at: now, level: 'info', message: '已按用户选择停止此未提交任务，并用当前配置重建；原配置和日志保留' }].slice(-200),
     });
+    if (completes) {
+      Object.assign(completes, manualCompletionPatch(completes,now), {continuedBy:task.id});
+      task.continuesTaskId = completes.id;
+    }
     this.data.tasks.unshift(task);
     // 新旧记录一次落盘；保存失败时恢复内存，不留下已停止旧任务或半个新任务。
     try { this.save(); }
     catch (error) {
       this.data.tasks.shift();
-      if (replaces) { for (const key of Object.keys(replaces)) if (!(key in previous)) delete replaces[key]; Object.assign(replaces, previous); }
+      if (oldTask) { for (const key of Object.keys(oldTask)) if (!(key in previous)) delete oldTask[key]; Object.assign(oldTask, previous); }
       throw error;
+    }
+    return task;
+  }
+  completeManually(task) {
+    if (task.state === 'completed') return task;
+    const previous = {...task};
+    Object.assign(task, manualCompletionPatch(task,this.clock()));
+    try { this.save(); }
+    catch (error) {
+      for (const key of Object.keys(task)) if (!(key in previous)) delete task[key];
+      Object.assign(task,previous);
+      throw error;
+    }
+    return task;
+  }
+  deleteTask(task) {
+    if (task.deletedAt) return task;
+    if (task.operation && task.state !== 'completed')
+      fail('TASK_UNRESOLVED','此任务有提交记录，请先核对或点击“已完成”，再删除',{status:409});
+    const previous = {...task}, at = this.clock();
+    Object.assign(task,{
+      deletedAt:at, updatedAt:at, state:task.state==='completed'?'completed':'cancelled',
+      logs:[...task.logs,{at,level:'info',message:'用户删除任务，已从队列移除并停止后续检查。'}].slice(-200),
+    });
+    try { this.save(); }
+    catch (error) {
+      for (const key of Object.keys(task)) if (!(key in previous)) delete task[key];
+      Object.assign(task,previous); throw error;
     }
     return task;
   }
@@ -88,7 +123,7 @@ export class Store {
   }
   publicState() {
     return {
-      tasks: this.data.tasks.filter(t=>t.config.provider==='autodl').map(t => ({ ...t, logs: t.logs.slice(-80) })),
+      tasks: this.data.tasks.filter(t=>t.config.provider==='autodl'&&!t.deletedAt).map(t => ({ ...t, logs: t.logs.slice(-80) })),
       notifications: this.data.notifications.filter(n=>!this.data.tasks.some(t=>t.id===n.taskId && t.config.provider!=='autodl')).slice(-100).reverse().map(({ deliveries, ...n }) => ({ ...n, deliveries })),
       settings: { ...this.data.settings,
         webhookUrl: this.data.settings.webhookUrl ? '***' : '',
