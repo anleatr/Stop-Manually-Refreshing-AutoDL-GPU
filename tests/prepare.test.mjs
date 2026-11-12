@@ -21,6 +21,7 @@ function prepareAdapter({ mode = 'create', baseline = [], sourceRow = null } = {
     checkGpuCountKept: record('checkGpuCountKept'),
     selectModel: record('selectModel'), locateHost: record('locateHost'), checkbox: record('checkbox'), settle: record('settle'),
     selectImage: async () => { calls.push('selectImage'); return config.imagePath.join(' / '); },
+    readHosts: async () => { calls.push('readHosts'); return [host]; },
     scanHosts: async (region, { untilId }) => { calls.push('scanHosts'); return { hosts: untilId === host.id ? [host] : [], pages: 1, exhausted: true, stalled: false, found: true }; },
     startBaseline: async () => { calls.push('baseline:start'); return { collect: async () => { calls.push('baseline:collect'); return [...baseline, ...(sourceRow ? [sourceRow] : [])]; }, close: async () => { calls.push('baseline:close'); } }; } });
   const source = mode === 'clone' ? { id: 'synthetic-source', region: '北京B区', gpuModel: 'RTX 4090', gpuCount: 1, extraDiskGB: 0, stopped: true, sourceCuda: '12.8' } : null;
@@ -33,7 +34,8 @@ test('探测命中后同一轮复用当前表单：不重新打开页面，实�
   probed(adapter, task);
   const quote = await adapter.prepare(task, host, null);
   assert.equal(calls.includes('goto'), false); assert.equal(quote.timing.reused, true);
-  assert.equal(calls[0], 'baseline:start'); assert.ok(calls.indexOf('baseline:collect') > calls.indexOf('selectImage'));
+  assert.equal(calls[0], 'baseline:start'); assert.ok(calls.indexOf('baseline:collect') < calls.indexOf('selectImage'));
+  assert.equal(calls.includes('scanHosts'), false); assert.ok(calls.includes('readHosts'));
   assert.equal(calls.at(-1), 'baseline:close'); assert.deepEqual(quote.baselineIds, ['synthetic-existing01']);
   assert.equal(adapter.prepared.quote, quote); assert.equal(adapter.probed, null);
 });

@@ -17,7 +17,7 @@ try {
   desktop=await _electron.launch({executablePath,args:['--user-data-dir='+path.join(dir,'desktop')],env});
   const page=await desktop.firstWindow(), errors=[];
   page.on('pageerror',error=>errors.push(error.message));
-  await page.waitForFunction(()=>document.querySelector('#connection').textContent==='已连接');
+  await page.waitForFunction(()=>document.querySelector('#connection')?.textContent==='已连接');
   assert.equal(await page.locator('.nav-item').count(),4);
   assert.equal(await page.locator('#account').isVisible(),true);
   await page.locator('[data-view=dashboard]').click();

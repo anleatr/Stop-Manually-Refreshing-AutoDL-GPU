@@ -55,7 +55,7 @@ npm run test:queue-ui
 
 ## 数据与配置
 
-`AUTODL_RUNTIME_DIR` 可以统一指定任务与登录资料位置。未指定时，桌面版使用 Electron 用户数据目录下的 `runtime/`，网页服务使用项目下的 `.runtime/`。从网页版本切换到桌面版时，可把该变量指向原有目录，先正常退出原服务再启动桌面版。
+`AUTODL_RUNTIME_DIR` 可以统一指定初始任务与登录资料位置。桌面版也可从窗口右上角的「数据存储」选择空文件夹，复制资料并重启。软件会记住所选目录，保留旧目录作为备份。未指定时，桌面版使用 Electron 用户数据目录下的 `runtime/`，网页服务使用项目下的 `.runtime/`。从网页版本切换到桌面版时，可把该变量指向原有目录，先正常退出原服务再启动桌面版。
 
 ~~~powershell
 $env:AUTODL_RUNTIME_DIR = 'D:\GPUWatch\runtime'

@@ -307,6 +307,11 @@ async function perform(command,id,data={}){
     toast(command==='attach'?'目标实例已绑定':command==='recheck'?(result.result?.cleared?'核对完成：没有新增实例，已清除此次提交记录':'实例列表有提交前没有的实例 '+(result.result?.extra||[]).map(i=>i.id).slice(0,3).join('、')+'，请核对后绑定'):'任务已更新',command==='recheck'&&!result.result?.cleared);
     await refresh();}catch(e){toast(e.message,true);}
 }
+if (window.desktopStorage) {
+  const storageButton = $('#data-storage');
+  storageButton.classList.remove('hidden');
+  storageButton.addEventListener('click', () => window.desktopStorage.changeDirectory());
+}
 $$('.nav-item').forEach(button=>button.addEventListener('click',()=>{$$('.nav-item').forEach(b=>b.classList.toggle('active',b===button));$$('.view').forEach(v=>v.classList.toggle('hidden',v.id!==button.dataset.view));$('#view-title').textContent={account:'用户配置',dashboard:'资源监测',queue:'任务队列',settings:'通知设置'}[button.dataset.view];}));
 $$('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
   if(currentMode==='create'&&button.dataset.mode==='clone')window.rememberAccountResource?.();

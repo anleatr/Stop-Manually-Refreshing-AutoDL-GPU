@@ -336,3 +336,14 @@ test('对账返回可能多租的实例时提醒一次；另一个同型号任�
   f.store.data.tasks.push(other);assert.equal(f.engine.pendingOverlap({...f.task,id:'synthetic-third'})?.id,'synthetic-other-task');
   assert.equal(f.engine.pendingOverlap({...f.task,id:'synthetic-third',config:{...f.task.config,gpuCount:2}}),null);
 });
+
+test('恢复旧版因型号缺失而停下的任务，其他人工确认仍保持停下', t => {
+  const f = fixture(t);
+  f.store.patch(f.task, { state: 'attention', deadlineAt: f.clock() + 60000, lastError: '当前地区的 GPU 型号筛选中没有“vGPU-48GB”' });
+  f.engine.recover();
+  assert.equal(f.task.state, 'watching');
+  assert.equal(f.task.lastError, null);
+  f.store.patch(f.task, { state: 'attention', lastError: '其他配置需要核对' });
+  f.engine.recover();
+  assert.equal(f.task.state, 'attention');
+});

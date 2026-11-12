@@ -25,10 +25,13 @@ test('手动完成须明确确认、拒绝忙碌和过期状态，完成后保�
   const f=await fixture(t),url='/api/tasks/'+f.old.id+'/complete';
   assert.equal((await f.request(url,{})).status,400);
   f.app.engine.busy=true;
+  f.app.engine.workingTask=f.old;
   assert.equal((await f.request(url,{confirmed:true,expectedUpdatedAt:f.old.updatedAt})).status,409);
-  f.app.engine.busy=false;
+  f.app.engine.workingTask=null;
   assert.equal((await f.request(url,{confirmed:true,expectedUpdatedAt:0})).status,409);
   assert.equal((await f.request(url,{confirmed:true,expectedUpdatedAt:f.old.updatedAt})).status,200);
+  assert.equal(f.app.engine.busy,true); // 另一个浏览器操作仍在运行。
+  f.app.engine.busy=false;
   assert.equal(f.old.state,'completed');assert.deepEqual(f.old.operation,f.operation);
   assert.equal(f.old.result,null);assert.equal(f.old.manualCompletion.previousState,'cancelled');
   assert.equal(f.old.manualCompletion.previousError,'结果不明');

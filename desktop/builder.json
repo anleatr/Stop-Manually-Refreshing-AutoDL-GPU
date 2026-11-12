@@ -5,7 +5,8 @@
     "output": "desktop/out"
   },
   "files": [
-    "desktop/main.mjs",
+    "desktop/*.mjs",
+    "desktop/preload.cjs",
     "desktop/icon.png",
     "src/**/*",
     "public/**/*",

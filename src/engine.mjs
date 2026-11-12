@@ -19,7 +19,7 @@ const MULTI_CARD_MIN_MILLI = 10001;
 export class Engine {
   constructor(store, adapters, notifier, { clock = () => Date.now(), random = Math.random, wallet = null } = {}) {
     this.wallet = wallet; this.store = store; this.adapters = adapters; this.notifier = notifier; this.clock = clock; this.random = random;
-    this.busy = false; this.timer = null; this.stopping = false;
+    this.busy = false; this.workingTask = null; this.timer = null; this.stopping = false;
     // 适配器对账时排除别的任务已绑定的实例，避免把别的任务新建的实例当成本任务的。
     for (const adapter of Object.values(adapters || {})) if (adapter && typeof adapter === 'object') adapter.claimedIds = t => this.claimedIds(t);
     this.recover();
@@ -51,6 +51,12 @@ export class Engine {
         this.store.patch(t, { state: ACTIVE.has(t.state) ? 'paused' : t.state, operation: null });
         this.store.log(t, 'warn', ACTIVE.has(t.state) ? '服务重启：此前尚未进入提交点击，任务已暂停，可恢复重新检查' : '服务重启：清除了尚未进入点击的操作意图（没有点击付费按钮）');
         continue;
+      }
+      // 旧版只保存了缺型号的错误正文，且会把任务停在 attention。
+      if (t.state === 'attention' && !t.operation && t.deadlineAt > this.clock() &&
+          /^(?:当前地区的 GPU 型号筛选中没有“|所选地区（.+）的 GPU 型号筛选中都没有“)/.test(t.lastError || '')) {
+        this.store.patch(t, { state: 'watching', nextCheckAt: this.clock(), lastError: null, errors: 0, retryStreak: 0 });
+        this.store.log(t, 'info', '已恢复因 GPU 型号暂时缺失而停住的检查');
       }
       if (!ACTIVE.has(t.state)) continue;
       if (t.operation) {
@@ -124,8 +130,11 @@ export class Engine {
       if (browser?.restorePending) { await browser.restoreSession(); return; }
       const now = this.clock();
       const task = this.store.tasks().filter(t => t.config.provider==='autodl' && ACTIVE.has(t.state) && t.nextCheckAt <= now).sort((a,b) => a.nextCheckAt - b.nextCheckAt)[0];
-      if (task) await this.step(task);
-    } finally { this.busy = false; }
+      if (task) {
+        this.workingTask = task;
+        await this.step(task);
+      }
+    } finally { this.workingTask = null; this.busy = false; }
     // 通知不占用 GPU 资源检查的互斥锁。
     if (!this.stopping) void this.notifier.flush().catch(e => console.error(redact(messageOf(e))));
   }
@@ -144,6 +153,7 @@ export class Engine {
       // 最近被平台拒绝下单的主机本轮不选（例如“当前主机存储库存已满”，列表上仍显示有空闲 GPU）。
       const cooled = host => isCooled(t.hostCooldowns, host, this.clock());
       const observation = await adapter.probe(t, { scope, skip: cooled });
+      const detectedAt = this.clock();
       if (t.state === 'paused' || t.state === 'cancelled' || this.stopping) return;
       if (observation.source) {
         // 克隆的环境来自源实例：首次读到或有变化时写一条日志，说明按什么筛选目标主机。
@@ -193,7 +203,7 @@ export class Engine {
       };
       await checkBalance(quote);
       if (stopped(t) || this.stopping) return;
-      const op = { id: randomUUID(), stage: 'intent', at: this.clock(), quote,
+      const op = { id: randomUUID(), stage: 'intent', at: this.clock(), detectedAt, quote,
         baselineIds: quote.baselineIds, sourceId: t.config.sourceId };
       this.store.patch(t, { operation: op, state: 'submitting' });
       this.store.log(t, 'info', `${prepared}；操作意图已落盘，准备一次性提交`);
@@ -207,6 +217,7 @@ export class Engine {
       }, freshQuote => checkBalance(freshQuote, BALANCE_CLICK_MAX_AGE));
       if (t.operation?.stage !== 'click_started') throw new AppError('ADAPTER_MARK', '适配器未确认持久化提交边界，已停止');
       this.store.patch(t, { operation: { ...t.operation, stage: 'accepted', receipt }, state: stopped(t) ? t.state : 'verifying', unclearStreak: 0 });
+      if (receipt.allocatedAt) this.recordAllocation(t, receipt.allocatedAt);
       this.notePossibleDuplicates(t, receipt?.lateIds);
       this.alert(t, 'submitted', `创建请求已提交${receipt.instanceId ? `，目标实例 ${receipt.instanceId}` : ''}；正在验证 GPU 运行${t.config.mode === 'clone' && t.config.copyDataDisk !== false ? '及数据盘复制。请勿在复制完成前写入目标数据盘' : t.config.mode === 'clone' ? '；本次未复制数据盘' : ''}`);
       this.store.log(t, 'info', `提交已返回（本轮开始到点击 ${((clickedAt - roundStart) / 1000).toFixed(1)} 秒），正在核对目标实例与数据盘进度`);
@@ -269,6 +280,10 @@ export class Engine {
         if (!t.balanceLow) { this.store.log(t, 'warn', message); this.alert(t, 'balance-low', message); }
         this.store.patch(t, { state: 'watching', lastError: null, balanceLow: { at: this.clock(), message } });
         this.schedule(t, { from: roundStart });
+      } else if (!stopped(t) && error.code === 'MODEL_MISSING' && error.absent === true) {
+        this.store.patch(t, { state: 'watching', lastError: null, retryStreak: 0 });
+        this.store.log(t, 'warn', '目标 GPU 型号暂时未出现在筛选中，下一轮继续检查原型号');
+        this.schedule(t, { from: roundStart });
       } else if (t.state !== 'paused' && t.state !== 'cancelled' && error.race === true) {
         // 候选被他人抢走、库存或价格变化：不是故障，不退避，按本轮开始时间立即进入下一轮。
         // 点击前就发现这台主机满足不了任务（如起租卡数）：这台主机暂时不选，下一轮试其他主机。
@@ -290,6 +305,16 @@ export class Engine {
         if (retryable) this.schedule(t, { error: true });
         else this.alert(t, 'attention', `任务需要处理：${message}`);
       }
+    }
+  }
+  recordAllocation(t, at) {
+    if (t.operation.allocatedAt) return;
+    const { detectedAt, clickedAt } = t.operation;
+    this.store.patch(t, { operation: { ...t.operation, allocatedAt: at } });
+    if (Number.isFinite(detectedAt) && Number.isFinite(clickedAt)) {
+      const seconds = ms => (ms / 1000).toFixed(2);
+      this.store.log(t, 'info', '已在 AutoDL 实例列表确认目标 GPU 分配。发现到点击 ' + seconds(clickedAt - detectedAt)
+        + ' 秒，点击到确认分配 ' + seconds(at - clickedAt) + ' 秒，合计 ' + seconds(at - detectedAt) + ' 秒');
     }
   }
   async checkResult(t, adapter) {
@@ -327,6 +352,7 @@ export class Engine {
     if (status.receipt) this.store.patch(t, { operation: { ...t.operation, receipt: status.receipt, stage: 'accepted' }, unclearStreak: 0 });
     const instance = status.instance;
     if (!instance) throw new AppError('VERIFY', '没有得到可核对的目标实例');
+    if (instance.gpuVerified && !instance.failed) this.recordAllocation(t, this.clock());
     if (t.manualDataVerifiedAt) instance.copyComplete = true;
     const assessed = assessInstance(instance, t.config.mode, t.config.copyDataDisk !== false);
     this.store.patch(t, { state: assessed.state, result: instance });
@@ -373,13 +399,13 @@ export class Engine {
     // 已停止但保留提交记录的任务也可以绑定，否则其提交记录会一直阻挡同型号/同源的新任务。
     if (!t.operation || !['reconciling','attention','paused','cancelled'].includes(t.state)) fail('STATE', '当前任务没有需要核对的提交记录');
     const wasCancelled = t.state === 'cancelled';
-    this.busy = true;
+    this.busy = true; this.workingTask = t;
     try {
       const receipt = await this.adapters[t.config.provider].attach(t, String(id || '').trim());
       // 绑定过程中被停止的任务保持停止；绑定前已停止的任务由用户主动绑定，恢复核对此实例。
       this.store.patch(t, { operation: { ...t.operation, stage: 'accepted', receipt }, state: t.state === 'cancelled' && !wasCancelled ? 'cancelled' : 'verifying', nextCheckAt: this.clock() });
       this.store.log(t, 'info', '已绑定经过型号与地区校验的目标实例，后续只检查此实例');
-    } finally { this.busy = false; }
+    } finally { this.workingTask = null; this.busy = false; }
   }
   // 点击结果不明的提交：用户确认后重新读取完整实例列表。只有没有任何提交前基线之外的实例时才清除提交记录。
   async recheck(t) {
@@ -390,7 +416,7 @@ export class Engine {
       fail('STATE', '当前任务没有待核对且未绑定实例的提交记录');
     // 给平台留出创建与列表刷新的时间，避免过早读到空结果。
     if (this.clock() - clickTime(op) < RECHECK_MIN_AGE) fail('TOO_EARLY', '点击后不足2分钟，平台可能仍在创建实例，请稍后再核对', { status: 409 });
-    this.busy = true;
+    this.busy = true; this.workingTask = t;
     try {
       const result = await this.adapters[t.config.provider].recheckSubmission(t);
       if (t.operation !== op) fail('TASK_CHANGED', '核对期间提交记录已变化，请刷新后查看', { status: 409 });
@@ -403,6 +429,6 @@ export class Engine {
         resolvedSubmissions: [...(t.resolvedSubmissions || []), resolved].slice(-10) });
       this.store.log(t, 'warn', '用户要求重新核对：完整实例列表中都是提交前已有的实例，确认该次点击未创建实例，已清除提交记录');
       return { cleared: true, extra: [] };
-    } finally { this.busy = false; }
+    } finally { this.workingTask = null; this.busy = false; }
   }
 }

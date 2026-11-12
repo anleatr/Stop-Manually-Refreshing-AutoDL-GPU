@@ -84,13 +84,16 @@ test('多地区：某地区没有此型号时跳过该地区，继续检查其�
   const complete = await none.adapter.probe({ config: config({ regions: ['北京B区', '西北B区'] }) }, { scope: 'full' });
   assert.equal(complete.complete, true); assert.match(complete.summary, /西北B区（没有此型号，已跳过）/);
 });
-test('所选地区都没有此型号、单地区没有此型号、或同名多项时报错停止，不改用其他型号', async () => {
+test('所有地区或单地区暂时缺型号时继续检查，歧义筛选仍报错', async () => {
   const both = listAdapter({ 北京B区: [[row('a1')]], 西北B区: [[row('b1')]] });
   missingIn(both.adapter, both.view, ['北京B区', '西北B区']);
-  await assert.rejects(both.adapter.probe({ config: config({ regions: ['北京B区', '西北B区'] }) }), error => error.code === 'MODEL_MISSING' && /都没有“RTX 4090”/.test(error.message) && !error.retryable);
+  const skipped = await both.adapter.probe({ config: config({ regions: ['北京B区', '西北B区'] }) });
+  assert.equal(skipped.complete, false); assert.deepEqual(skipped.hosts, []);
+  assert.match(skipped.summary, /下一轮继续检查/);
   const single = listAdapter({ 北京B区: [[row('a1')]] });
   missingIn(single.adapter, single.view, ['北京B区']);
-  await assert.rejects(single.adapter.probe({ config: config() }), error => error.code === 'MODEL_MISSING' && error.absent);
+  const missing = await single.adapter.probe({ config: config() });
+  assert.deepEqual(missing.hosts, []); assert.match(missing.summary, /下一轮继续检查/);
   const ambiguous = listAdapter({ 北京B区: [[row('a1')]], 西北B区: [[row('b1')]] });
   ambiguous.adapter.selectModel = async () => { throw new AppError('MODEL_MISSING', '合成：同名多项'); };
   await assert.rejects(ambiguous.adapter.probe({ config: config({ regions: ['北京B区', '西北B区'] }) }), /同名多项/);

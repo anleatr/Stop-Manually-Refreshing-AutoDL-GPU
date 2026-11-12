@@ -560,6 +560,7 @@ export class AutoDLBrowserAdapter {
       options = await this.modelFilter(model);
       if (exactModelFilter(options)) return;
     }
+    if (!options.some(option => option.target)) throw new AppError('MODEL_MISSING', '型号筛选更新期间目标型号暂时消失', { absent: true });
     fail('MODEL_FILTER', 'GPU 型号筛选未能只保留“' + model + '”（' + describeModelFilter(options) + '）；可能被页面重置，本次未提交', LIMITED_RETRY);
   }
   async readHosts(region, expectedModel = '') {
@@ -623,7 +624,7 @@ export class AutoDLBrowserAdapter {
     await this.radio('按量计费');
     const hosts = [], regions = []; let scanMs = 0;
     for (const region of t.config.regions) {
-      // 多地区监测时，某个地区的型号筛选里没有此型号就跳过该地区；所有所选地区都没有才报错停止。
+      // 地区暂时没有目标型号时，本轮跳过，下轮仍检查原型号。
       // 地区、型号或卡数选项当前不可选（灰色）：本轮跳过该地区，不点击，下一轮再看；不当作页面故障停下任务。
       let step = '地区';
       try {
@@ -631,7 +632,7 @@ export class AutoDLBrowserAdapter {
         step = '卡数'; await this.radio(String(t.config.gpuCount));
       } catch (error) {
         if (error.code === 'OPTION_DISABLED') { regions.push({ region, pages: 0, exhausted: false, stalled: false, found: false, unavailable: step }); continue; }
-        if (!error.absent || t.config.regions.length < 2) throw error;
+        if (error.code !== 'MODEL_MISSING' || !error.absent) throw error;
         regions.push({ region, pages: 0, exhausted: true, stalled: false, found: false, missing: true });
         continue;
       }
@@ -641,11 +642,9 @@ export class AutoDLBrowserAdapter {
       hosts.push(...scan.hosts); regions.push({ region, pages: scan.pages, exhausted: scan.exhausted, stalled: scan.stalled, found: !!scan.found });
       if (scan.found) break;
     }
-    if (regions.length && regions.every(r => r.missing))
-      fail('MODEL_MISSING', '所选地区（' + t.config.regions.join('、') + '）的 GPU 型号筛选中都没有“' + t.config.gpuModel + '”，请点“同步 AutoDL 型号”核对后重新选择；不会改用其他显卡或地区');
     // 源实例信息（地区、型号、数据盘、源环境 CUDA）随观察结果返回；克隆页地址只在适配器内存中。
     this.lastSource = source;
-    const found = regions.some(r => r.found), complete = !found && regions.length === t.config.regions.length && regions.every(r => r.exhausted);
+    const found = regions.some(r => r.found), complete = !found && regions.length === t.config.regions.length && regions.every(r => r.exhausted) && regions.some(r => !r.missing);
     // 命中时记住当前表单：同一轮 prepare 可直接在此页继续，不再重新打开页面和设置筛选。
     if (found) this.probed = { taskId: t.id, region: regions.at(-1).region, page: this.page, url: this.page.url?.() || '', at: Date.now() };
     const timing = { openMs: opened - started, filterMs: Date.now() - opened - scanMs, scanMs, totalMs: Date.now() - started };
@@ -836,6 +835,9 @@ export class AutoDLBrowserAdapter {
     this.probed = null;
     // 提交前保存实例全集作为对账基线：与表单准备并行，在点击前读取完成。
     const baseline = await this.startBaseline(c.gpuModel);
+    const listedAt = Date.now();
+    const baselineRows = baseline.collect();
+    void baselineRows.catch(() => {}); // 表单准备先失败时仍由 finally 关闭基线页。
     try {
       if (!reuse) {
         if (c.mode === 'clone') source = await this.openClone(t);
@@ -843,11 +845,13 @@ export class AutoDLBrowserAdapter {
       }
       // 复用时这些选项通常已是所需状态，只核对、不点击也不等待。
       await this.radio('按量计费'); await this.radio(candidate.region); await this.selectModel(c.gpuModel); await this.radio(String(c.gpuCount));
-      const scan = await this.scanHosts(candidate.region,{config:c,source,untilId:candidate.id}), current = scan.hosts.find(h => h.id === candidate.id);
+      const scan = reuse
+        ? { hosts: await this.readHosts(candidate.region, c.gpuModel) }
+        : await this.scanHosts(candidate.region, { config:c, source, untilId:candidate.id });
+      const current = scan.hosts.find(h => h.id === candidate.id);
       if (!current && scan.stalled) fail('PAGE_STUCK', '提交前找回候选主机时资源列表翻页没有前进；本次未提交', LIMITED_RETRY);
       if (!current || candidateReasons(current,c,source).length) throw new AppError('RESOURCE_GONE', '候选主机库存或价格已改变，继续监测', RACE);
-      // 翻回候选所在页/滚动段，避免选择错误的同号节点。
-      await this.locateHost(candidate.id);
+      if (!reuse) await this.locateHost(candidate.id);
       await this.radio(candidate.id);
       // 有的主机要求多卡起租（rent_mode，如“该主机2卡起租”）：选中后平台会把 GPU 数量改大或让原数量不可选。
       // 这台主机满足不了任务的卡数，换下一台；不当作页面故障停下任务。
@@ -871,9 +875,7 @@ export class AutoDLBrowserAdapter {
       if (c.mode === 'create') image = await this.selectImage(c);
       await this.settle();
       const formMs = Date.now() - started;
-      // 源实例状态的读取时间记为读取实例列表之前，不把读取所花的时间算作“刚核验过”。
-      const listedAt = Date.now();
-      const before = await baseline.collect();
+      const before = await baselineRows;
       this.lateCreation(t, before);
       // 克隆：用同一份实例列表复核源实例仍存在、已关机且规格不变。
       if (c.mode === 'clone') { const row = before.find(i => hasId(i, c.sourceId)); validateCloneSource(c, row && { ...row, id: c.sourceId }); }
@@ -1024,7 +1026,11 @@ export class AutoDLBrowserAdapter {
       const instances = await this.scanInstances(t.config.gpuModel);
       // 仅有一个位于指定主机的精确匹配新增实例时自动绑定；缺少主机号或出现多个候选时必须人工核对。
       const candidates = this.newTargets(instances, t);
-      if (candidates.length === 1) Object.assign(receipt, { instanceId: candidates[0].id, evidence: 'unique-new-instance-on-selected-host', lateIds: this.strays(t, instances, candidates[0].id) });
+      if (candidates.length === 1) {
+        const target = candidates[0];
+        Object.assign(receipt, { instanceId: target.id, evidence: 'unique-new-instance-on-selected-host',
+          lateIds: this.strays(t, instances, target.id), ...(target.failed ? {} : { allocatedAt: Date.now() }) });
+      }
     } catch {}
     return receipt;
   }

@@ -340,11 +340,11 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
           }
           else if(matched[2] === 'complete') {
             if (data.confirmed !== true || !Number.isFinite(data.expectedUpdatedAt)) fail('CONFIRM','请明确确认手动完成任务',{status:400});
-            await browserWork(() => {
-              if (task.state === 'completed') return;
+            if (task.state !== 'completed') {
+              if (engine.workingTask === task || engine.stopping) fail('BUSY','此任务正在执行一轮操作，请等本轮结束后再确认完成',{status:409});
               if (task.updatedAt !== data.expectedUpdatedAt) fail('TASK_CHANGED','任务状态已变化，请刷新后重新确认',{status:409});
               store.completeManually(task);
-            });
+            }
           }
           else if(matched[2] === 'attach') await engine.attach(task,data.instanceId);
           else if(matched[2] === 'recheck') {
@@ -380,14 +380,19 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
   });
   if(startEngine) engine.start();
   let closing;
-  return {server,store,engine,adapters,wallet,token,close(){
+  return {server,store,engine,adapters,wallet,token,close(afterClose){
     if (!closing) closing = (async () => {
       wallet.close();
       const closed = new Promise(resolve => server.close(resolve));
       try {
         await engine.stop(); await notifier.stop();
-        await Promise.allSettled(Object.values(adapters).map(a=>a.close?.()));
+        const adaptersClosed = await Promise.allSettled(Object.values(adapters).map(a=>a.close?.()));
         await closed;
+        if (afterClose) {
+          const failed = adaptersClosed.find(result => result.status === 'rejected');
+          if (failed) throw failed.reason;
+          await afterClose();
+        }
       } finally { releaseLock(); }
     })();
     return closing;
