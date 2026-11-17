@@ -33,7 +33,7 @@ function renderPricing() {
   $('#price-source').textContent=snapshot?snapshot.source+' · '+time(snapshot.checkedAt,true):'尚未读取';
   const button=$('#refresh-pricing');
   button.disabled=!!accountBusy||!!browserAction||(!accountReady()||!!appState.browser?.busy);
-  button.textContent=accountBusy==='pricing'?'读取中…':'读取 AutoDL 官方报价';
+  button.textContent=accountBusy==='pricing'?'读取中…':$('.gpu-candidate')?'读取第 1 项官方报价':'读取 AutoDL 官方报价';
 }
 const money = n => Number.isFinite(n) ? '¥' + n.toFixed(3) : '—';
 function accountReady() { return appState.browser?.session?.state === 'ready' && appState.browser.session.browserOpen; }
@@ -130,6 +130,7 @@ $('#task-form').addEventListener('input',renderBudget);
 $('#task-form').addEventListener('change',updateAccountForm);
 $('#refresh-pricing').addEventListener('click',()=>void accountCommand('pricing',async()=>{
   const payload=taskPayload(),signature=currentPricingSignature(),revision=pricingRevision;pricingError='';
+  delete payload.candidates; // 手动报价预览对应第一项候选，实际提交会按命中项重新报价。
   try {
     const result=await api('/api/pricing/preview',payload);
     if(signature!==currentPricingSignature()||revision!==pricingRevision){toast('配置已变化，请按新配置重新读取报价');return;}
@@ -140,7 +141,7 @@ $('#refresh-pricing').addEventListener('click',()=>void accountCommand('pricing'
 $('#wallet-form').addEventListener('submit',e=>{e.preventDefault();const f=e.target,value=f.elements.token.value,rememberToken=f.elements.rememberToken.checked;f.elements.token.value='';void accountCommand('wallet',async()=>{const result=await api('/api/wallet/token',{token:value,rememberToken});appState.wallet=result.wallet;walletSettingsLoaded=false;toast(rememberToken?'Token 已加密记住，余额已同步':'余额已同步；Token 仅在本次服务中使用');});});
 $('#refresh-wallet').addEventListener('click',()=>void accountCommand('wallet',async()=>{const result=await api('/api/wallet/refresh',{});appState.wallet=result.wallet;toast('余额已更新');}));
 $('#clear-wallet').addEventListener('click',()=>void accountCommand('wallet',async()=>{const result=await api('/api/wallet/clear-token',{});appState.wallet=result.wallet;walletSettingsLoaded=false;$('#wallet-form').elements.token.value='';toast('余额 Token 已从内存及保存配置中清除');}));
-$('#check-budget').addEventListener('click',()=>void accountCommand('budget',async()=>{const result=await api('/api/wallet/preflight',taskPayload());appState.wallet=result.wallet;toast('当前余额通过按官方报价的预检，提交前还会重新核对');}));
+$('#check-budget').addEventListener('click',()=>void accountCommand('budget',async()=>{const payload=taskPayload();delete payload.candidates;const result=await api('/api/wallet/preflight',payload);appState.wallet=result.wallet;toast($('.gpu-candidate')?'第 1 项候选的余额预检通过，提交前还会按命中项重新核对':'当前余额通过按官方报价的预检，提交前还会重新核对');}));
 function resetAccountState(){walletSettingsLoaded=false;instanceSignature=null;$('#wallet-form').reset();clearPricing();}
 $('#account-instances').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(!button||button.disabled)return;const f=$('#task-form');document.querySelector('[data-view=dashboard]').click();document.querySelector('[data-mode=clone]').click();f.elements.sourceId.value=button.dataset.source;updateAccountForm();$('#live-source-fields').scrollIntoView({block:'center',behavior:'smooth'});});
 window.addEventListener('appstatechange',renderAccount);

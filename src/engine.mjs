@@ -1,9 +1,11 @@
+import { taskResources, submittedResource } from './config.mjs';
 import { randomUUID } from 'node:crypto';
 import { AppError, messageOf, redact, fail } from './errors.mjs';
 import { selectCandidate, verifyQuote, assessInstance, gpuKey } from './matching.mjs';
 import { minimumBudget, availableMilli } from './wallet.mjs';
 import { coolHost, isCooled, cooldownNote, carryRejections } from './host-cooldown.mjs';
 const ACTIVE = new Set(['queued', 'watching', 'preparing', 'submitting', 'verifying']);
+const withResource = (task, resource) => Object.assign(Object.create(task), { config: { ...task.config, ...resource } });
 const stopped = t => ['paused', 'cancelled'].includes(t.state);
 // 点击前余额结果最多可沿用的时长；发现候选时已并行刷新，正常情况下不再额外请求。
 const BALANCE_CLICK_MAX_AGE = 15000;
@@ -30,7 +32,7 @@ export class Engine {
   // 另一个任务（同型号、同卡数、地区有重叠）有尚未绑定实例的提交时，本任务不提交：两边同时等结果时分不清新实例属于谁。
   pendingOverlap(t) {
     return this.store.tasks().find(o => o.id !== t.id && o.config.provider === 'autodl' && !o.manualCompletion && o.operation && !o.operation.receipt?.instanceId
-      && gpuKey(o.config.gpuModel) === gpuKey(t.config.gpuModel) && o.config.gpuCount === t.config.gpuCount
+      && gpuKey(submittedResource(o).gpuModel) === gpuKey(t.config.gpuModel) && submittedResource(o).gpuCount === t.config.gpuCount
       && o.config.regions.some(r => t.config.regions.includes(r))) || null;
   }
   // 此前有被拒绝或确认未创建的点击之后，另一台主机出现了与任务相符的新实例：可能多租了一台，提醒一次。
@@ -76,9 +78,9 @@ export class Engine {
     while (this.busy) await new Promise(resolve => setTimeout(resolve, 50)); }
   alert(t, event, message) { this.store.enqueueNotification(t, event, message); }
   // 首页优先任务：到期才完整翻页；没有扫描策略的旧任务保持每轮完整翻页。
-  scanScope(t) {
+  scanScope(t, lastFullScanAt = t.lastFullScanAt) {
     if (t.config.scanScope !== 'first-page') return 'full';
-    return Number.isFinite(t.lastFullScanAt) && this.clock() - t.lastFullScanAt < t.config.fullScanSeconds * 1000 ? 'first-page' : 'full';
+    return Number.isFinite(lastFullScanAt) && this.clock() - lastFullScanAt < t.config.fullScanSeconds * 1000 ? 'first-page' : 'full';
   }
   // 正常轮次从上一轮开始时计时：一轮本身超过间隔时下一轮立即开始。出错时从现在起按次数退避。
   schedule(t, { error = false, from = null } = {}) {
@@ -88,8 +90,8 @@ export class Engine {
   }
   // 余额预检（不付费）：按页面单卡价估算预计时长的费用下限，余额确定不够时提醒一次并跳过本次准备，继续监测；充值后自动恢复。
   // 没有发现候选时最多每5分钟查一次余额；发现候选时不额外等待，只在此前提示过不足时重新查询，以便充值后立即提交。
-  async lowBalance(t, hosts, host) {
-    if (t.config.action !== 'execute' || !t.config.balanceGuard || typeof this.wallet?.recentBalance !== 'function') return false;
+  async lowBalance(t, hosts, host, config = t.config) {
+    if (config.action !== 'execute' || !config.balanceGuard || typeof this.wallet?.recentBalance !== 'function') return false;
     // 没有连接余额 Token：监测时就提醒一次，不要等找到空闲 GPU 才在付费前停下；连接后自动恢复。
     if (this.wallet.publicState?.().configured === false) {
       if (!t.balanceLow) {
@@ -100,24 +102,24 @@ export class Engine {
       return !!host;
     }
     if (t.balanceLow?.kind === 'token') { this.store.patch(t, { balanceLow: null }); this.store.log(t, 'info', '余额 Token 已连接，恢复自动提交'); }
-    const prices = (host ? [host] : hosts.filter(h => gpuKey(h.gpuModel) === gpuKey(t.config.gpuModel) && t.config.regions.includes(h.region)))
+    const prices = (host ? [host] : hosts.filter(h => gpuKey(h.gpuModel) === gpuKey(config.gpuModel) && config.regions.includes(h.region)))
       .map(h => h.price).filter(price => Number.isFinite(price) && price > 0);
-    const price = prices.length ? Math.min(...prices) : null, need = price && minimumBudget(t.config, price);
+    const price = prices.length ? Math.min(...prices) : null, need = price && minimumBudget(config, price);
     if (!need) return false;
     let snapshot;
     // 余额不足提醒后：找到空闲 GPU 时重新查询（充值后马上能提交）；没有候选时最多每5分钟查一次。
     try { snapshot = host && !t.balanceLow ? this.wallet.snapshot : await this.wallet.recentBalance(host ? 0 : 300000); } catch { return false; }
     if (!snapshot) return false;
-    const available = availableMilli(snapshot, t.config);
+    const available = availableMilli(snapshot, config);
     // AutoDL 下单页的规则：租多卡时钱包余额（不含代金券）需大于 10 元，否则弹出“余额不足”（2026-10-30 读取其公开前端代码）。
-    const multiCardShort = t.config.gpuCount > 1 && Math.round((snapshot.balance || 0) * 1000) < MULTI_CARD_MIN_MILLI;
+    const multiCardShort = config.gpuCount > 1 && Math.round((snapshot.balance || 0) * 1000) < MULTI_CARD_MIN_MILLI;
     if (available >= need.requiredMilli && !multiCardShort) {
       if (t.balanceLow) { this.store.patch(t, { balanceLow: null }); this.store.log(t, 'info', '余额已足够，恢复自动提交'); }
       return false;
     }
     const message = multiCardShort && available >= need.requiredMilli
       ? `钱包余额 ¥${(snapshot.balance || 0).toFixed(2)}：AutoDL 规定租用多卡实例时钱包余额需大于 10 元（代金券不计），找到空闲 GPU 也无法提交，请先充值。程序继续监测，充值后自动恢复`
-      : `可用余额 ¥${(available / 1000).toFixed(2)}，不足页面单卡价 ¥${price}/时 × ${t.config.gpuCount} 卡 × ${need.hours} 小时${t.config.balanceReserve ? ' + 保留余额' : ''} ≈ ¥${need.required.toFixed(2)}；找到空闲 GPU 也无法提交，请先充值。程序继续监测，充值后自动恢复`;
+      : `可用余额 ¥${(available / 1000).toFixed(2)}，不足页面单卡价 ¥${price}/时 × ${config.gpuCount} 卡 × ${need.hours} 小时${config.balanceReserve ? ' + 保留余额' : ''} ≈ ¥${need.required.toFixed(2)}；找到空闲 GPU 也无法提交，请先充值。程序继续监测，充值后自动恢复`;
     if (!t.balanceLow) { this.store.log(t, 'warn', message); this.alert(t, 'balance-low', message); }
     this.store.patch(t, { balanceLow: { at: this.clock(), message } });
     return true;
@@ -140,7 +142,24 @@ export class Engine {
   }
   async step(t) {
     if(t.config.provider!=='autodl') return;
-    const adapter = this.adapters[t.config.provider];
+    const resources = taskResources(t.config);
+    const start = t.nextResourceIndex ?? 0;
+    for (let offset = 0; offset < resources.length; offset++) {
+      const index = (start + offset) % resources.length;
+      await this.checkResource(t, resources[index], resources.length > 1 ? index : null);
+      if (t.operation || t.state !== 'watching' || this.stopping) break;
+      // 暂时性的页面错误保留原有退避，下轮从下一项开始，避免同一项始终挡住其余候选。
+      if (t.errors) {
+        if (resources.length > 1) this.store.patch(t, { nextResourceIndex: (index + 1) % resources.length });
+        break;
+      }
+    }
+  }
+  async checkResource(t, resource, index) {
+    const view = index === null ? t : withResource(t, resource);
+    const config = view.config, adapter = this.adapters[config.provider];
+    const resourceLabel = index === null ? '' : '候选 ' + (index + 1) + '（' + resource.gpuModel + ' × ' + resource.gpuCount + '，额外扩容 ' + resource.extraDiskGB + ' GB）：';
+    const cooldownHost = host => index === null || !host ? host : { ...host, resourceIndex: index };
     let roundStart = this.clock(), clickedAt = null, phase = 'probe', candidateHost = null;
     try {
       if (t.operation) { phase = 'check'; await this.checkResult(t, adapter); return; }
@@ -149,10 +168,10 @@ export class Engine {
       }
       roundStart = this.clock();
       this.store.patch(t, { state: 'watching', attempts: t.attempts + 1 });
-      const scope = this.scanScope(t);
+      const scope = this.scanScope(t, index === null ? t.lastFullScanAt : (t.resourceFullScans?.[index] ?? null));
       // 最近被平台拒绝下单的主机本轮不选（例如“当前主机存储库存已满”，列表上仍显示有空闲 GPU）。
-      const cooled = host => isCooled(t.hostCooldowns, host, this.clock());
-      const observation = await adapter.probe(t, { scope, skip: cooled });
+      const cooled = host => isCooled(t.hostCooldowns, cooldownHost(host), this.clock());
+      const observation = await adapter.probe(view, { scope, skip: cooled });
       const detectedAt = this.clock();
       if (t.state === 'paused' || t.state === 'cancelled' || this.stopping) return;
       if (observation.source) {
@@ -160,58 +179,58 @@ export class Engine {
         const before = t.source, now = observation.source;
         if (!before || before.sourceCuda !== now.sourceCuda || before.extraDiskGB !== now.extraDiskGB)
           this.store.log(t, 'info', `已只读读取源实例：${now.gpuModel || '型号未知'} × ${now.gpuCount ?? '?'}，镜像 CUDA ${now.sourceCuda || '未知'}`
-            + (t.config.copyDataDisk !== false ? `，数据盘扩容 ${now.extraDiskGB ?? 0} GB` : '') + `；目标 ${t.config.gpuModel} × ${t.config.gpuCount}，按源环境 CUDA 筛选宿主驱动`);
+            + (config.copyDataDisk !== false ? `，数据盘扩容 ${now.extraDiskGB ?? 0} GB` : '') + `；目标 ${config.gpuModel} × ${config.gpuCount}，按源环境 CUDA 筛选宿主驱动`);
         this.store.patch(t, { source: observation.source });
       }
       const usable = observation.hosts.filter(h => !cooled(h)), skipped = observation.hosts.length - usable.length;
-      const host = selectCandidate(usable, t.config, observation.source); candidateHost = host;
+      const host = selectCandidate(usable, config, observation.source); candidateHost = host;
       const note = skipped ? cooldownNote(t.hostCooldowns, this.clock()) : '';
-      const summary = [observation.summary, note].filter(Boolean).join('；');
+      const summary = resourceLabel + [observation.summary, note].filter(Boolean).join('；');
       this.store.patch(t, { lastScan: { at: this.clock(), count: observation.hosts.length, scope: observation.scope || 'full',
         complete: observation.complete === true, summary, candidate: host || null }, errors: 0, lastError: null,
-        ...(observation.complete === true ? { lastFullScanAt: roundStart } : {}) });
-      const short = await this.lowBalance(t, usable, host);
+        ...(observation.complete === true ? index === null ? { lastFullScanAt: roundStart } : { resourceFullScans: { ...t.resourceFullScans, [index]: roundStart } } : {}) });
+      const short = await this.lowBalance(t, usable, host, config);
       if (t.state === 'paused' || t.state === 'cancelled' || this.stopping) return;
       if (!host) { this.store.patch(t, { retryStreak: 0 }); this.store.log(t, 'info', summary || '暂无同时满足型号、CUDA、容量及预算的 GPU'); this.schedule(t, { from: roundStart }); return; }
       // 记录命中的候选，之后核验失败时日志能看出失败发生在配置报价阶段。
       this.store.log(t, 'info', `${summary || '找到合格候选'}。候选：${host.region} ${host.number ? host.number + ' ' : ''}${host.gpuModel}，空闲 ${host.available}${host.total ? '/' + host.total : ''}，单卡 ¥${host.price}/时；${short ? (t.balanceLow?.kind === 'token' ? '没有连接余额 Token，未核验和提交' : '余额不足，未核验和提交，请先充值') : '开始核验配置与完整报价'}`);
       if (short) { this.schedule(t, { from: roundStart }); return; }
-      const overlap = t.config.action === 'execute' ? this.pendingOverlap(t) : null;
+      const overlap = config.action === 'execute' ? this.pendingOverlap(view) : null;
       if (overlap) {
         this.store.log(t, 'warn', '任务“' + (overlap.config.name || overlap.id) + '”（同型号、同卡数）的提交还在等待核对结果；本任务暂不提交，避免分不清新实例属于哪个任务。请先处理那个任务');
         this.schedule(t, { from: roundStart }); return;
       }
-      const guarded = t.config.action === 'execute' && t.config.balanceGuard && typeof this.wallet?.refresh === 'function';
+      const guarded = config.action === 'execute' && config.balanceGuard && typeof this.wallet?.refresh === 'function';
       // 余额与表单准备并行刷新，点击前只需确认结果足够新。
       if (guarded) void this.wallet.refresh({ force: true }).catch(() => {});
       this.store.patch(t, { state: 'preparing' });
-      const quote = await adapter.prepare(t, host, observation.source);
+      const quote = await adapter.prepare(view, host, observation.source);
       if (t.state === 'paused' || t.state === 'cancelled' || this.stopping) return;
-      const reasons = verifyQuote(quote, t.config, observation.source);
+      const reasons = verifyQuote(quote, config, observation.source);
       if (reasons.length) throw new AppError('QUOTE', `提交前校验未通过：${reasons.join('、')}`);
       this.store.patch(t, { quote, retryStreak: 0 });
       const prepared = quote.timing ? `配置核验用时 ${(quote.timing.totalMs / 1000).toFixed(1)} 秒（${quote.timing.reused ? '沿用扫描页面' : '重新打开页面'}，实例基线并行读取）` : '配置核验完成';
-      if (t.config.action === 'observe') {
+      if (config.action === 'observe') {
         this.store.patch(t, { state: 'found' }); this.store.log(t, 'info', `${prepared}；发现符合条件的 GPU，已停止在付费提交之前`);
-        this.alert(t, 'found', `找到 ${host.region} ${t.config.gpuModel} × ${t.config.gpuCount}，配置报价 ¥${quote.hourly}/时，磁盘 ¥${quote.storageDaily}/日；当前为仅监测任务，未租用`); return;
+        this.alert(t, 'found', `找到 ${host.region} ${config.gpuModel} × ${config.gpuCount}，配置报价 ¥${quote.hourly}/时，磁盘 ¥${quote.storageDaily}/日；当前为仅监测任务，未租用`); return;
       }
       const checkBalance = async (freshQuote, maxAge) => {
-        if (t.config.provider !== 'autodl' || !t.config.balanceGuard) return;
+        if (config.provider !== 'autodl' || !config.balanceGuard) return;
         if (!this.wallet) fail('BALANCE_SERVICE', '余额保护服务不可用，未提交');
-        const result = await this.wallet.check(t.config, freshQuote, maxAge ? { maxAge } : {});
+        const result = await this.wallet.check(config, freshQuote, maxAge ? { maxAge } : {});
         this.store.patch(t, { balanceCheck: result });
       };
       await checkBalance(quote);
       if (stopped(t) || this.stopping) return;
       const op = { id: randomUUID(), stage: 'intent', at: this.clock(), detectedAt, quote,
-        baselineIds: quote.baselineIds, sourceId: t.config.sourceId };
+        baselineIds: quote.baselineIds, sourceId: config.sourceId, ...(index === null ? {} : { resource, resourceIndex: index }) };
       this.store.patch(t, { operation: op, state: 'submitting' });
       this.store.log(t, 'info', `${prepared}；操作意图已落盘，准备一次性提交`);
       phase = 'submit';
-      const receipt = await adapter.submit(t, quote, () => {
+      const receipt = await adapter.submit(view, quote, () => {
         if (this.stopping) throw new AppError('ENGINE_STOPPING', '后台正在停止，未点击付费按钮');
         if (t.state === 'paused' || t.state === 'cancelled') throw new AppError('STOPPED', '任务已暂停，未点击付费按钮');
-        if (t.config.provider === 'autodl' && t.config.balanceGuard) this.wallet.confirm(t.balanceCheck);
+        if (config.provider === 'autodl' && config.balanceGuard) this.wallet.confirm(t.balanceCheck);
         clickedAt = this.clock();
         this.store.patch(t, { operation: { ...t.operation, stage: 'click_started', clickedAt } });
       }, freshQuote => checkBalance(freshQuote, BALANCE_CLICK_MAX_AGE));
@@ -219,7 +238,7 @@ export class Engine {
       this.store.patch(t, { operation: { ...t.operation, stage: 'accepted', receipt }, state: stopped(t) ? t.state : 'verifying', unclearStreak: 0 });
       if (receipt.allocatedAt) this.recordAllocation(t, receipt.allocatedAt);
       this.notePossibleDuplicates(t, receipt?.lateIds);
-      this.alert(t, 'submitted', `创建请求已提交${receipt.instanceId ? `，目标实例 ${receipt.instanceId}` : ''}；正在验证 GPU 运行${t.config.mode === 'clone' && t.config.copyDataDisk !== false ? '及数据盘复制。请勿在复制完成前写入目标数据盘' : t.config.mode === 'clone' ? '；本次未复制数据盘' : ''}`);
+      this.alert(t, 'submitted', `创建请求已提交${receipt.instanceId ? `，目标实例 ${receipt.instanceId}` : ''}；正在验证 GPU 运行${config.mode === 'clone' && config.copyDataDisk !== false ? '及数据盘复制。请勿在复制完成前写入目标数据盘' : config.mode === 'clone' ? '；本次未复制数据盘' : ''}`);
       this.store.log(t, 'info', `提交已返回（本轮开始到点击 ${((clickedAt - roundStart) / 1000).toFixed(1)} 秒），正在核对目标实例与数据盘进度`);
       this.schedule(t);
     } catch (error) {
@@ -232,11 +251,11 @@ export class Engine {
       // 点击后平台明确拒绝，且两次读取实例列表都没有新实例：清除提交记录，保留拒绝证据，供后续检查延迟创建。
       if (t.operation?.stage === 'click_started' && error.notCreated === true) {
         const rejection = { at: this.clock(), message: redact(messageOf(error)).slice(0, 300), operationId: t.operation.id,
-          baselineIds: t.operation.baselineIds || [], hostNumber: t.operation.quote?.host?.number || '' };
+          baselineIds: t.operation.baselineIds || [], hostNumber: t.operation.quote?.host?.number || '', resource: t.operation.resource };
         // 没有识别出原因的未创建连续出现时提醒一次（例如页面需要人工确认），但不停止，继续监测。
         const streak = error.unrecognized ? (t.unclearStreak || 0) + 1 : 0;
         // 与主机有关的拒绝（不含账户问题、GPU 架构不符）：这台主机暂时不选，下一轮试其他主机。
-        const cool = error.race === true ? coolHost(t.hostCooldowns, t.operation.quote?.host, messageOf(error), this.clock()) : null;
+        const cool = error.race === true ? coolHost(t.hostCooldowns, cooldownHost(t.operation.quote?.host), messageOf(error), this.clock()) : null;
         this.store.patch(t, { operation: null, unclearStreak: streak, submitRejections: [...(t.submitRejections || []), rejection].slice(-5),
           ...(cool?.record ? { hostCooldowns: cool.list } : {}) });
         this.store.log(t, 'warn', `${error.unrecognized ? '点击后没有识别出结果' : '点击后平台拒绝创建'}${clickNote}，两次核对实例列表均无新实例，已清除本次提交记录`
@@ -280,6 +299,10 @@ export class Engine {
         if (!t.balanceLow) { this.store.log(t, 'warn', message); this.alert(t, 'balance-low', message); }
         this.store.patch(t, { state: 'watching', lastError: null, balanceLow: { at: this.clock(), message } });
         this.schedule(t, { from: roundStart });
+      } else if (!stopped(t) && index !== null && phase === 'probe' && error.code === 'CUDA_ARCH') {
+        this.store.patch(t, { state: 'watching', errors: 0, lastError: null });
+        this.store.log(t, 'warn', resourceLabel + redact(messageOf(error)));
+        this.schedule(t, { from: roundStart });
       } else if (!stopped(t) && error.code === 'MODEL_MISSING' && error.absent === true) {
         this.store.patch(t, { state: 'watching', lastError: null, retryStreak: 0 });
         this.store.log(t, 'warn', '目标 GPU 型号暂时未出现在筛选中，下一轮继续检查原型号');
@@ -287,7 +310,7 @@ export class Engine {
       } else if (t.state !== 'paused' && t.state !== 'cancelled' && error.race === true) {
         // 候选被他人抢走、库存或价格变化：不是故障，不退避，按本轮开始时间立即进入下一轮。
         // 点击前就发现这台主机满足不了任务（如起租卡数）：这台主机暂时不选，下一轮试其他主机。
-        const cool = error.hostProblem && candidateHost ? coolHost(t.hostCooldowns, candidateHost, messageOf(error), this.clock()) : null;
+        const cool = error.hostProblem && candidateHost ? coolHost(t.hostCooldowns, cooldownHost(candidateHost), messageOf(error), this.clock()) : null;
         this.store.patch(t, { state: 'watching', lastError: null, retryStreak: 0, raceLosses: (t.raceLosses || 0) + 1, ...(cool?.record ? { hostCooldowns: cool.list } : {}) });
         this.store.log(t, 'warn', `${redact(messageOf(error))}（本轮开始后 ${((this.clock() - roundStart) / 1000).toFixed(1)} 秒）`
           + (cool?.record ? `；${cool.record.hostNumber || '该主机'}约 ${Math.round((cool.record.until - cool.record.at) / 60000)} 分钟内不再选择` : ''));
@@ -318,16 +341,17 @@ export class Engine {
     }
   }
   async checkResult(t, adapter) {
-    const status = await adapter.reconcile(t);
+    const status = await adapter.reconcile(t.operation.resource ? withResource(t, submittedResource(t)) : t);
     if (stopped(t)) return;
     this.store.patch(t, { lastError: null, errors: 0 });
     this.notePossibleDuplicates(t, status.lateIds);
     // 点击结果不明的提交经自动核对确认未创建：清除记录，立即继续监测；连续出现时提醒一次，不停止任务。
     if (status.notCreated && t.operation.stage === 'click_started' && !t.operation.receipt?.instanceId) {
       const op = t.operation, streak = (t.unclearStreak || 0) + 1;
-      const rejection = { at: this.clock(), message: '点击结果不明，自动核对确认未创建', operationId: op.id, baselineIds: op.baselineIds || [], hostNumber: op.quote?.host?.number || '' };
+      const rejection = { at: this.clock(), message: '点击结果不明，自动核对确认未创建', operationId: op.id, baselineIds: op.baselineIds || [], hostNumber: op.quote?.host?.number || '', resource: op.resource };
       // 这台主机点击后没有结果：暂时不选，先试其他主机。
-      const cool = coolHost(t.hostCooldowns, op.quote?.host, '点击后没有识别出结果', this.clock());
+      const host = op.quote?.host;
+      const cool = coolHost(t.hostCooldowns, host && { ...host, resourceIndex: op.resourceIndex }, '点击后没有识别出结果', this.clock());
       this.store.patch(t, { operation: null, unclearStreak: streak, lastProgress: null, nextCheckAt: this.clock(),
         submitRejections: [...(t.submitRejections || []), rejection].slice(-5), state: 'watching', ...(cool.record ? { hostCooldowns: cool.list } : {}) });
       this.store.log(t, 'warn', status.reason + '；已清除提交记录，继续监测'
@@ -401,7 +425,7 @@ export class Engine {
     const wasCancelled = t.state === 'cancelled';
     this.busy = true; this.workingTask = t;
     try {
-      const receipt = await this.adapters[t.config.provider].attach(t, String(id || '').trim());
+      const receipt = await this.adapters[t.config.provider].attach(t.operation.resource ? withResource(t, submittedResource(t)) : t, String(id || '').trim());
       // 绑定过程中被停止的任务保持停止；绑定前已停止的任务由用户主动绑定，恢复核对此实例。
       this.store.patch(t, { operation: { ...t.operation, stage: 'accepted', receipt }, state: t.state === 'cancelled' && !wasCancelled ? 'cancelled' : 'verifying', nextCheckAt: this.clock() });
       this.store.log(t, 'info', '已绑定经过型号与地区校验的目标实例，后续只检查此实例');
@@ -418,7 +442,7 @@ export class Engine {
     if (this.clock() - clickTime(op) < RECHECK_MIN_AGE) fail('TOO_EARLY', '点击后不足2分钟，平台可能仍在创建实例，请稍后再核对', { status: 409 });
     this.busy = true; this.workingTask = t;
     try {
-      const result = await this.adapters[t.config.provider].recheckSubmission(t);
+      const result = await this.adapters[t.config.provider].recheckSubmission(op.resource ? withResource(t, submittedResource(t)) : t);
       if (t.operation !== op) fail('TASK_CHANGED', '核对期间提交记录已变化，请刷新后查看', { status: 409 });
       if (result.extra.length) {
         this.store.log(t, 'warn', '重新核对：实例列表有 ' + result.extra.length + ' 个提交前没有的实例（' + result.extra.slice(0, 3).map(i => i.id).join('、') + '），请确认后绑定；提交记录保留');

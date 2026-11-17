@@ -82,7 +82,6 @@ try {
   assert.equal(await model.inputValue(), '');
   assert.equal(await model.evaluate(input => input.validity.valueMissing), true);
   assert.equal(await custom.isDisabled(), true);
-  assert.equal(await page.locator('#metric-gpu-model').textContent(), '尚未选择');
   // 同步前没有内置预设，只有提示项和“其他型号”。
   const optionValues = () => model.locator('option').evaluateAll(options => options.map(option => option.value).filter(value => value && value !== '__custom__'));
   const optionText = value => model.locator('option').evaluateAll((options, value) => options.find(option => option.value === value)?.textContent, value);
@@ -96,7 +95,7 @@ try {
   // 同步后只列出所选地区（默认北京B区）的型号，括号内为同步时的空闲/总数；加选地区后列出合集并分地区标注。
   await page.locator('[data-view=dashboard]').click();await page.locator('#sync-gpus').click();
   await waitOptionText('RTX 4090', 'RTX 4090（2/8）');
-  assert.match(await page.locator('#gpu-model-hint').textContent(), /^同步于/);
+  assert.equal(await page.locator('#gpu-model-hint').isVisible(), false);
   const beijing = SYNTHETIC_GPU_CATALOG.regions[0].models.map(row => row.model);
   assert.deepEqual(await optionValues(), beijing);
   assert.ok(app.store.data.gpuCatalog?.regions.length === 6);
@@ -110,12 +109,44 @@ try {
   // 新建可选型号；克隆必须使用同步源实例的精确型号、数量和地区。
   await page.locator('[data-view=dashboard]').click();await selectSyntheticImage(page);
   await model.selectOption('A100'); await form.locator('[name=gpuCount]').selectOption('2');
-  assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100');
-  assert.match(await page.locator('#metric-gpu-detail').textContent(), /2 张.*新建实例/);
+  await page.locator('#add-gpu-candidate').click();
+  await form.locator('.candidate-model').selectOption('RTX 4090');
+  await form.locator('.candidate-count').selectOption('1');
+  await form.locator('.candidate-disk').fill('64');
+  for (const width of [1440, 800, 420]) {
+    await page.setViewportSize({ width, height: 1080 });
+    const layout = await page.locator('.gpu-candidates').evaluate(group => {
+      const cards = [...group.querySelectorAll('.candidate-card')];
+      const fieldsFit = cards.every(card => {
+        const frame = card.getBoundingClientRect();
+        const fields = [...card.querySelectorAll('.candidate-fields :is(select, input)')].filter(field => field.getClientRects().length);
+        return fields.length === 3 && fields.every(field => {
+          const rect = field.getBoundingClientRect();
+          return rect.left >= frame.left && rect.right <= frame.right && rect.top >= frame.top && rect.bottom <= frame.bottom;
+        });
+      });
+      const button = group.querySelector('#add-gpu-candidate').getBoundingClientRect();
+      const nextSection = document.querySelector('#create-fields').getBoundingClientRect();
+      return { cardCount: cards.length, fieldsFit, sectionGap: nextSection.top - button.bottom };
+    });
+    assert.equal(layout.cardCount, 2);
+    assert.equal(layout.fieldsFit, true);
+    assert.ok(layout.sectionGap >= 12, JSON.stringify({ width, ...layout }));
+  }
+  await page.setViewportSize({ width: 1440, height: 1080 });
+
+
   await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '1');
   assert.equal(app.store.tasks()[0].config.gpuModel, 'A100');
   assert.equal(app.store.tasks()[0].config.gpuCount, 2);
+  assert.deepEqual(app.store.tasks()[0].config.candidates, [
+    { gpuModel: 'A100', gpuCount: 2, extraDiskGB: 0 },
+    { gpuModel: 'RTX 4090', gpuCount: 1, extraDiskGB: 64 },
+  ]);
+  await page.locator('[data-view=dashboard]').click();
+  await form.getByRole('button', { name: '移除候选配置 2' }).click();
+
   assert.equal(app.store.tasks()[0].config.pollSeconds, 1);
   assert.equal(app.store.tasks()[0].config.scanScope, 'first-page');
   assert.equal(app.store.tasks()[0].config.fullScanSeconds, 20);
@@ -130,7 +161,6 @@ try {
   await waitOptionText('A100', 'A100（所选地区当前未列出）');
   assert.equal(await model.inputValue(), 'A100');
   assert.match(await page.locator('#gpu-model-hint').textContent(), /所选型号不在所选地区的同步列表中/);
-  assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100');
   autodl.gpuCatalog = syntheticGpuCatalog;
   await page.locator('[data-view=dashboard]').click();await page.locator('#sync-gpus').click();
   await waitOptionText('A100', 'A100（2/8）');
@@ -143,15 +173,26 @@ try {
   assert.equal(await model.inputValue(), 'L20');
   assert.equal(await model.isDisabled(), false); assert.equal(await form.locator('[name=gpuCount]').inputValue(), '2');
   assert.match(await page.locator('#gpu-model-title').textContent(), /目标 GPU 型号（可更换）/);
-  assert.match(await page.locator('#metric-gpu-detail').textContent(), /同源型号克隆/);
   // 克隆到其他型号：L20 源实例 → RTX 4090 × 2；地区仍为源实例所在地区。
   await model.selectOption('RTX 4090');
-  assert.match(await page.locator('#metric-gpu-detail').textContent(), /克隆到其他型号/);
   assert.equal(await page.locator('#source-summary').count(), 0);
   assert.equal(await form.locator('[name=region]').evaluateAll(nodes => nodes.every(node => node.disabled)), true);
+  await page.locator('#add-gpu-candidate').click();
+  await form.locator('.candidate-model').selectOption('__custom__');
+  await form.locator('.candidate-custom').fill(customModel);
+  await form.locator('.candidate-count').selectOption('1');
+  await form.locator('.candidate-disk').fill('64');
+
   await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();
   await page.waitForFunction(() => document.querySelector('#task-count').textContent === '2');
   const moved = app.store.tasks().find(task => task.config.mode === 'clone' && task.config.sourceId === 'syntheticl20-source');
+  assert.deepEqual(moved.config.candidates, [
+    { gpuModel: 'RTX 4090', gpuCount: 2, extraDiskGB: 0 },
+    { gpuModel: customModel, gpuCount: 1, extraDiskGB: 64 },
+  ]);
+  await page.locator('[data-view=dashboard]').click();
+  await form.getByRole('button', { name: '移除候选配置 2' }).click();
+
   assert.equal(moved.config.gpuModel, 'RTX 4090'); assert.equal(moved.config.gpuCount, 2); assert.equal(moved.config.cuda, ''); assert.deepEqual(moved.config.regions, ['北京B区']);
 
   // 自定义名称的空值不能提交；显存、版本等后缀不得被截掉。
@@ -164,7 +205,6 @@ try {
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('请选择 GPU 精确型号'));
   assert.equal(posts.length, 2);
   await page.locator('[data-view=dashboard]').click();await page.locator('[data-mode=create]').click(); await custom.fill('  A100 80GB  ');
-  assert.equal(await page.locator('#metric-gpu-model').textContent(), 'A100 80GB');
   await page.evaluate(() => new Promise(resolve => window.addEventListener('appstatechange', resolve, { once: true })));
   assert.equal(await model.inputValue(), '__custom__'); assert.equal(await custom.inputValue(), '  A100 80GB  ');
   assert.equal(await custom.inputValue(), '  A100 80GB  ');
@@ -203,13 +243,12 @@ try {
     for (const width of [1920, 1440, 1280, 1024, 768, 520, 390, 360, 320]) {
       await page.setViewportSize({ width, height: 1080 });
       const layout = await page.evaluate(() => {
-        const metric = document.querySelector('#metric-gpu-model'), rect = metric.getBoundingClientRect();
+        const model = document.querySelector('#task-form [name=gpuModel]');
         return { overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-          metricOverflow: metric.scrollWidth > metric.clientWidth + 1, right: rect.right, width: window.innerWidth };
+          right: model.getBoundingClientRect().right, width: window.innerWidth };
       });
       assert.equal(layout.overflow, false, mode + ' page overflow at ' + width);
-      assert.equal(layout.metricOverflow, false, mode + ' metric overflow at ' + width);
-      assert.equal(layout.right <= layout.width + 1, true, mode + ' metric outside viewport at ' + width);
+      assert.equal(layout.right <= layout.width + 1, true, mode + ' model dropdown outside viewport at ' + width);
     }
   }
   await form.locator('[name=sourceId]').selectOption('syntheticcustom-source');
@@ -225,9 +264,9 @@ try {
   readySince = Date.now();
   for (const deadline = Date.now() + 15000; catalogSyncs < 1 && Date.now() < deadline;) await page.waitForTimeout(100);
   assert.equal(catalogSyncs, 1);
-  await page.waitForFunction(() => !document.querySelector('#sync-gpus').disabled && /^同步于 /.test(document.querySelector('#gpu-model-hint').textContent));
+  await page.waitForFunction(() => !document.querySelector('#sync-gpus').disabled);
   await page.waitForTimeout(4600); assert.equal(catalogSyncs, 1);
-  assert.match(await page.locator('#gpu-model-hint').textContent(), /同步时的空闲\/总数/);
+  assert.doesNotMatch(await page.locator('#gpu-model-hint').textContent(), /同步于|同步时的空闲\/总数/);
   // 真实浏览器中的本地 DOM 夹具：不用真实 AutoDL 页面或会话。
   fixtures.set('/synthetic-host-dom', '<!doctype html><meta charset="utf-8"><body>' +
     '<label class="el-checkbox"><input type="checkbox" checked>全部</label>' +

@@ -347,3 +347,52 @@ test('恢复旧版因型号缺失而停下的任务，其他人工确认仍保�
   f.engine.recover();
   assert.equal(f.task.state, 'attention');
 });
+
+
+const alternativeResources = [
+  { gpuModel: 'RTX 4090', gpuCount: 2, extraDiskGB: 300 },
+  { gpuModel: 'vGPU-48GB', gpuCount: 1, extraDiskGB: 120 },
+];
+for (const mode of ['create', 'clone']) {
+  test(mode + '：第一项库存不足时按第二项提交，并用实际提交规格核对', async t => {
+    const f = fixture(t, { mode, candidates: alternativeResources });
+    const probe = f.adapter.probe.bind(f.adapter), seen = [];
+    f.adapter.probe = async task => {
+      seen.push(task.config.gpuModel);
+      const observation = await probe(task);
+      if (task.config.gpuModel === 'RTX 4090') observation.hosts[0].available = 1;
+      return observation;
+    };
+    await f.engine.tick();
+    assert.deepEqual(seen, ['RTX 4090', 'vGPU-48GB']);
+    assert.equal(f.submissions, 1);
+    const persisted = new Store(f.dir, { clock: f.clock });
+    const restored = persisted.get(f.task.id);
+    assert.deepEqual(restored.operation.resource, alternativeResources[1]);
+    assert.equal(restored.operation.quote.extraDiskGB, 120);
+    f.advance(70000);
+    const reconcile = f.adapter.reconcile.bind(f.adapter);
+    f.adapter.reconcile = async task => {
+      assert.equal(task.config.gpuModel, 'vGPU-48GB');
+      assert.equal(task.config.gpuCount, 1);
+      return reconcile(task);
+    };
+    const engine = new Engine(persisted, { autodl: f.adapter }, f.notifier, { clock: f.clock });
+    await engine.tick();
+    assert.equal(restored.state, 'completed');
+    assert.equal(f.submissions, 1);
+  });
+}
+test('多个候选中一项提交结果不明时，整条任务只对账，不尝试下一项', async t => {
+  const f = fixture(t, { candidates: alternativeResources });
+  const probe = f.adapter.probe.bind(f.adapter), seen = [];
+  f.adapter.probe = async task => { seen.push(task.config.gpuModel); return probe(task); };
+  let clicks = 0;
+  f.adapter.submit = async (_task, _quote, mark) => { mark(); clicks++; throw new AppError('NETWORK', '提交后断线'); };
+  await f.engine.tick();
+  assert.equal(f.task.operation.stage, 'click_started');
+  await f.due(120001);
+  assert.equal(f.task.state, 'reconciling');
+  assert.deepEqual(seen, ['RTX 4090']);
+  assert.equal(clicks, 1);
+});

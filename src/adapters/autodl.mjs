@@ -1,3 +1,4 @@
+import { taskResources } from '../config.mjs';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -43,6 +44,10 @@ function identityProblem(instance, t) {
 // 一行中所有形如实例 ID 的片段（实例名称或备注也可能长这样）。基线保存全部片段：
 // 克隆出的新实例沿用源实例的名称时，第一个片段可能与源实例相同，但它自己的实例 ID 不在基线中，仍会被认作新实例。
 const idsOf = i => i?.ids?.length ? i.ids : i?.id ? [i.id] : [];
+const instanceModels = task => task.config.candidates
+  ? [...new Set([...taskResources(task.config).map(resource => resource.gpuModel),
+    ...(task.submitRejections || []).map(rejection => rejection.resource?.gpuModel).filter(Boolean)])]
+  : task.config.gpuModel;
 const isNew = (i, baseline) => idsOf(i).some(id => !baseline.has(id));
 // 新实例的 ID：取基线中没有的那个片段。
 const freshId = (i, baseline) => idsOf(i).find(id => !baseline.has(id)) || i.id;
@@ -834,7 +839,7 @@ export class AutoDLBrowserAdapter {
     const c = t.config, started = Date.now(), reuse = this.canReuseProbe(t, candidate);
     this.probed = null;
     // 提交前保存实例全集作为对账基线：与表单准备并行，在点击前读取完成。
-    const baseline = await this.startBaseline(c.gpuModel);
+    const baseline = await this.startBaseline(instanceModels(t));
     const listedAt = Date.now();
     const baselineRows = baseline.collect();
     void baselineRows.catch(() => {}); // 表单准备先失败时仍由 finally 关闭基线页。
@@ -896,7 +901,7 @@ export class AutoDLBrowserAdapter {
     for (const rejection of (t.submitRejections || []).filter(r => Date.now() - r.at < 30 * 60000 && Array.isArray(r.baselineIds))) {
       const baseline = new Set(rejection.baselineIds);
       const late = instances.filter(i => isNew(i, baseline)).map(i => ({ ...i, id: freshId(i, baseline) }))
-        .filter(i => !claimed.has(i.id) && this.verifyIdentity(i, t));
+        .filter(i => !claimed.has(i.id) && this.matchesRejection(i, t, rejection));
       if (late.length) throw new AppError('SUBMIT_LATE', (rejection.hostNumber ? '此前在 ' + rejection.hostNumber + ' 被拒绝或确认未创建的提交' : '此前被拒绝或确认未创建的提交')
         + '之后，实例列表出现了与任务相符的新实例 ' + late.map(i => i.id + (i.hostNumber ? '（' + i.hostNumber + '）' : '')).slice(0, 3).join('、')
         + '，可能是延迟创建；已停止自动提交，避免多租。请到 AutoDL 核对，确认后再恢复任务', { lateIds: [...new Set(late.flatMap(idsOf).concat(late.map(i => i.id)))] });
@@ -908,8 +913,13 @@ export class AutoDLBrowserAdapter {
     const recent = (t.submitRejections || []).filter(r => Date.now() - r.at < 30 * 60000 && Array.isArray(r.baselineIds));
     if (!recent.length) return [];
     const now = new Set(t.operation?.baselineIds || []), claimed = this.claimedIds(t), known = new Set(t.lateInstanceIds || []);
-    return instances.filter(i => isNew(i, now) && recent.some(r => isNew(i, new Set(r.baselineIds)))).map(i => ({ ...i, id: freshId(i, now) }))
-      .filter(i => i.id !== boundId && !claimed.has(i.id) && !known.has(i.id) && this.verifyIdentity(i, t)).map(i => i.id);
+    return instances.filter(i => isNew(i, now)).map(i => ({ ...i, id: freshId(i, now) }))
+      .filter(i => i.id !== boundId && !claimed.has(i.id) && !known.has(i.id)
+        && recent.some(r => isNew(i, new Set(r.baselineIds)) && this.matchesRejection(i, t, r))).map(i => i.id);
+  }
+  matchesRejection(instance, task, rejection) {
+    return (rejection.resource ? [rejection.resource] : taskResources(task.config))
+      .some(resource => this.verifyIdentity(instance, { config: { ...task.config, ...resource } }));
   }
   // 选中主机后 GPU 数量仍是任务要求的数量；否则这台主机有起租卡数等限制，按竞争失败换下一台，并暂时不选它。
   async checkGpuCountKept(count) {
@@ -1023,7 +1033,7 @@ export class AutoDLBrowserAdapter {
     // 页面已跳回实例列表：平台已受理。之后读取实例列表失败也保留“已受理”，不会被当成结果不明而在之后判为未创建。
     const receipt = { acceptedAt: Date.now(), instanceId: null, evidence: 'accepted-navigation-only' };
     try {
-      const instances = await this.scanInstances(t.config.gpuModel);
+      const instances = await this.scanInstances(instanceModels(t));
       // 仅有一个位于指定主机的精确匹配新增实例时自动绑定；缺少主机号或出现多个候选时必须人工核对。
       const candidates = this.newTargets(instances, t);
       if (candidates.length === 1) {
@@ -1072,7 +1082,7 @@ export class AutoDLBrowserAdapter {
       if (pass) await sleep(this.rejectRecheckMs);
       let rows;
       for (let attempt = 0; ; attempt++) {
-        try { rows = await this.instances(t.config.gpuModel); break; }
+        try { rows = await this.instances(instanceModels(t)); break; }
         catch (error) { if (error.code !== 'LIST_LOADING' || attempt >= 2) throw error; await sleep(1500); }
       }
       const extra = rows.filter(i => isNew(i, baseline)).map(i => freshId(i, baseline));
@@ -1101,7 +1111,7 @@ export class AutoDLBrowserAdapter {
   }
   async reconcile(t) {
     if (t.operation.stage === 'click_started' && !t.operation.receipt?.instanceId) return this.reconcileUnclear(t);
-    const instances = await this.instances(t.config.gpuModel);
+    const instances = await this.instances(instanceModels(t));
     const id = t.operation.receipt?.instanceId;
     if (id) {
       const found = instances.find(i => hasId(i, id)), instance = found && { ...found, id };
@@ -1128,8 +1138,8 @@ export class AutoDLBrowserAdapter {
     // 从实际点击时算起（意图落盘到点击之间可能有十几秒）；旧记录没有点击时间时用意图时间。
     if (Date.now() - (op.clickedAt || op.at) < 2 * 60000) return { pending: true, reason: '点击结果暂不明确，约 2 分钟后自动核对实例列表；不会再次创建' };
     const baseline = new Set(op.baselineIds || []);
-    let rows = await this.instances(t.config.gpuModel);
-    if (!rows.some(i => isNew(i, baseline))) { await sleep(this.rejectRecheckMs); rows = await this.instances(t.config.gpuModel); }
+    let rows = await this.instances(instanceModels(t));
+    if (!rows.some(i => isNew(i, baseline))) { await sleep(this.rejectRecheckMs); rows = await this.instances(instanceModels(t)); }
     const extra = rows.filter(i => isNew(i, baseline)).map(i => freshId(i, baseline)), mine = this.newTargets(rows, t);
     if (!extra.length) return { notCreated: true, reason: '点击结果不明，自动核对：完整实例列表两次都只有点击前已有的实例，确认未创建' };
     // 平台曾明确拒绝本次点击（noAutoBind）：之后出现的新实例不自动绑定，交给用户核对。
@@ -1140,7 +1150,7 @@ export class AutoDLBrowserAdapter {
   }
   async attach(t,id) {
     if (!/^[a-z0-9]+-[a-z0-9]+$/i.test(id)) fail('INSTANCE','实例 ID 格式不正确');
-    const found = (await this.instances(t.config.gpuModel)).find(i => hasId(i, id)), instance = found && { ...found, id };
+    const found = (await this.instances(instanceModels(t))).find(i => hasId(i, id)), instance = found && { ...found, id };
     if (!this.verifyIdentity(instance,t)) fail('INSTANCE','目标实例的地区/精确 GPU 型号/数量不匹配，或选中了源实例');
     if ((t.operation.baselineIds || []).includes(id)) fail('INSTANCE','目标实例已存在于提交前基线，请避免将原有实例错误绑定为此次新实例');
     return {instanceId:id,acceptedAt:t.operation.at,manual:true};
@@ -1148,7 +1158,7 @@ export class AutoDLBrowserAdapter {
   // 重新读取完整实例列表，返回提交前基线之外的全部实例（不限型号，任何新增都不能当作“未创建”）。
   async recheckSubmission(t) {
     const baseline = new Set(t.operation.baselineIds || []);
-    const rows = await this.instances(t.config.gpuModel);
+    const rows = await this.instances(instanceModels(t));
     return { extra: rows.filter(i => isNew(i, baseline)).map(i => ({ id: freshId(i, baseline), region: i.region, gpuModel: i.gpuModel, gpuCount: i.gpuCount })) };
   }
   async logout() {

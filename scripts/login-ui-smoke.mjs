@@ -61,6 +61,7 @@ try {
   // 默认“自动创建并开机”：未勾选费用授权时表单校验先拦截，不发请求。之后按本测试原意使用“只通知”。
   assert.equal(await page.locator('#task-form [name=action]').inputValue(), 'execute');
   assert.equal(await page.locator('#task-form').evaluate(form => form.checkValidity()), false);
+  await page.locator('#advanced-settings > summary').click();
   await page.locator('#task-form [name=action]').selectOption('observe');
 
   await page.locator('[data-view=dashboard]').click();await page.locator('#submit-task').click();

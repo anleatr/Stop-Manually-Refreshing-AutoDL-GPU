@@ -1,5 +1,5 @@
 import { fail } from './errors.mjs';
-import { archCudaProblem } from './matching.mjs';
+import { archCudaProblem, gpuKey } from './matching.mjs';
 export const REGIONS = ['北京B区', '西北B区', '重庆A区', '内蒙B区', '北京A区', '佛山区'];
 // GPU 型号不再内置预设：表单从 AutoDL 创建页按地区同步官方型号（gpu-catalog.mjs），其他型号由用户精确填写。
 export const GPU_MODEL_MAX_LENGTH = 80;
@@ -22,6 +22,16 @@ function num(value, fallback, min, max, label, integer = false) {
   if (!Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) fail('CONFIG', `${label}应在 ${min}～${max} 之间${integer ? '，且为整数' : ''}`);
   return n;
 }
+export const taskResources = config => config.candidates ?? [{ gpuModel: config.gpuModel, gpuCount: config.gpuCount, extraDiskGB: config.extraDiskGB }];
+export const submittedResource = task => task.operation?.resource ?? taskResources(task.config)[0];
+
+function normalizeResource(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail('CONFIG', '候选配置格式无效');
+  const gpuModel = normalizeGpuModel(input.gpuModel);
+  const gpuCount = num(input.gpuCount, 1, 1, 12, 'GPU 数量', true);
+  if (![1,2,3,4,5,6,7,8,10,12].includes(gpuCount)) fail('CONFIG', 'AutoDL 数量选项不支持此 GPU 数量');
+  return { gpuModel, gpuCount, extraDiskGB: num(input.extraDiskGB, 0, 0, 100000, '数据盘额外扩容 GB', true) };
+}
 export function normalizeConfig(input = {}) {
   for (const key of ['copyDataDisk','balanceGuard','includeVouchers']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') fail('CONFIG', `${key} 必须为布尔值`);
@@ -33,15 +43,19 @@ export function normalizeConfig(input = {}) {
   const action = input.action ?? 'observe';
   if (!['observe', 'execute'].includes(action)) fail('CONFIG', '执行方式无效');
   if (action === 'execute' && input.paidConsent !== true) fail('CONSENT', '自动创建会产生 AutoDL 费用，请在表单中明确启用并确认预算');
-  const gpuModel = normalizeGpuModel(input.gpuModel);
+  if (input.candidates !== undefined && (!Array.isArray(input.candidates) || !input.candidates.length || input.candidates.length > 8))
+    fail('CONFIG', '请填写 1～8 项候选配置');
+  const candidates = (input.candidates ?? [input]).map(normalizeResource);
+  if (new Set(candidates.map(c => JSON.stringify([gpuKey(c.gpuModel), c.gpuCount, c.extraDiskGB]))).size !== candidates.length)
+    fail('CONFIG', '候选配置重复，请删除相同的型号、卡数和扩容组合');
+  const [primary] = candidates;
+  const { gpuModel } = primary;
   const regions = [...new Set((Array.isArray(input.regions) ? input.regions : ['北京B区']).map(x => text(x, 20)))];
   if (!regions.length || regions.some(x => !REGIONS.includes(x))) fail('CONFIG', '至少选择一个有效地区');
   if (mode === 'clone' && regions.length !== 1) fail('CONFIG', '克隆任务必须指定源实例所在的单个地区');
   // 克隆继承源实例的系统盘环境，CUDA 在首次检查时从 AutoDL 克隆页读取，不再由用户填写；新建按所选镜像。
   const cuda = mode === 'clone' ? '' : text(input.cuda || '12.1', 10);
   if (mode === 'create' && !/^1\d\.\d{1,2}$/.test(cuda)) fail('CONFIG', 'CUDA 版本请写成 12.1、12.8、13.0 等格式');
-  const gpuCount = num(input.gpuCount, 1, 1, 12, 'GPU 数量', true);
-  if (![1,2,3,4,5,6,7,8,10,12].includes(gpuCount)) fail('CONFIG', 'AutoDL 数量选项不支持此 GPU 数量');
   const sourceId = text(input.sourceId, 80);
   if (mode === 'clone' && !/^[a-zA-Z0-9]+-[a-zA-Z0-9]+$/.test(sourceId)) fail('CONFIG', '请填写完整源实例 ID（含中间横线）');
   const imagePath = (Array.isArray(input.imagePath) ? input.imagePath : text(input.imagePath, 500).split('/')).map(x => text(x, 150)).filter(Boolean);
@@ -50,7 +64,7 @@ export function normalizeConfig(input = {}) {
     const imageCuda = imagePath.at(-1).match(/^(?:CUDA\s*)?(1\d\.\d{1,2})$/i)?.[1];
     if (imageCuda !== cuda) fail('CONFIG', '镜像路径最后一级 CUDA 必须与任务 CUDA 完全一致');
     // AutoDL 下单前会对这种组合弹出架构提示，本程序不代为确认，因此建任务时就拒绝。
-    const arch = archCudaProblem(gpuModel, cuda);
+    const arch = candidates.map(c => archCudaProblem(c.gpuModel, cuda)).find(Boolean);
     if (arch) fail('CONFIG', arch + '。AutoDL 会在下单前提示该架构的 GPU 需要更高的 CUDA，请改选 CUDA 12.8 及以上的官方镜像或其他 GPU 型号');
   }
   // 旧任务继续尊重既有价格边界；新表单明确选择按官方实时报价。
@@ -64,14 +78,13 @@ export function normalizeConfig(input = {}) {
   if (!SCAN_SCOPES.includes(scanScope)) fail('CONFIG', '扫描方式无效');
   return {
     name: text(input.name || `${mode === 'clone' ? '迁移克隆' : '新建实例'} · ${gpuModel}`, 80),
-    provider, mode, action, paidConsent: action === 'execute', gpuModel, gpuCount, regions, cuda,
+    provider, mode, action, paidConsent: action === 'execute', ...primary, ...(candidates.length > 1 ? { candidates } : {}), regions, cuda,
     sourceId: mode === 'clone' ? sourceId : '',
     imagePath: mode === 'create' ? imagePath : [],
     copyDataDisk: mode === 'clone' && input.copyDataDisk !== false,
     balanceGuard: input.balanceGuard === true, includeVouchers: input.includeVouchers === true,
     expectedHours: num(input.expectedHours, 1, 0.1, 8760, '预计运行小时'),
     balanceReserve: num(input.balanceReserve, 0, 0, 1000000, '保留余额'),
-    extraDiskGB: num(input.extraDiskGB, 0, 0, 100000, '数据盘额外扩容 GB', true),
     pricePolicy, maxGpuHourly, maxTotalHourly, maxStorageDaily,
     pollSeconds: num(input.pollSeconds, POLL_SECONDS.default, POLL_SECONDS.min, POLL_SECONDS.max, '检查间隔秒', true),
     scanScope, fullScanSeconds: scanScope === 'first-page' ? num(input.fullScanSeconds, FULL_SCAN_SECONDS.default, FULL_SCAN_SECONDS.min, FULL_SCAN_SECONDS.max, '完整翻页间隔秒', true) : null,

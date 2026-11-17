@@ -289,7 +289,11 @@ export function createApplication({ runtimeDir = process.env.AUTODL_RUNTIME_DIR 
             }
             let balanceCheck = null;
             if (config.provider === 'autodl' && config.action === 'execute' && config.balanceGuard) {
-              if(officialPricing(config)) {
+              if(config.candidates) {
+                // 余额由实际命中的候选配置核验，首项报价不能阻止其他可负担的候选。
+                await wallet.refresh({force:true});
+                balanceCheck={pendingQuote:true,checkedAt:Date.now()};
+              } else if(officialPricing(config)) {
                 const fresh=pricePreview && pricePreview.configKey===pricingKey(config) && Date.now()-pricePreview.checkedAt<=QUOTE_MAX_AGE ? pricePreview : null;
                 if(fresh?.quote)balanceCheck=await wallet.check(config,fresh.quote,{force:true});
                 else {

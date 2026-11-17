@@ -4,7 +4,8 @@ const number = value => value == null ? null : Number(value);
 // 保留完整型号及显存/接口后缀，不把 A100 80GB、4090D 等降级为基础型号。
 const knownGpuLine = /^(?:(?:NVIDIA|Tesla|GeForce|Quadro)\s+)*(?:(?:RTX|GTX)\s*(?:PRO\s*)?[A-Z]?\d{3,5}|TITAN(?:\s+[XVZ])?|vGPU(?:\s*[-_]?\s*\d+)?|[ABHVLTP]\d{1,4})[A-Z0-9 .+()（）/_-]*$/i;
 const knownGpuSuffix = new RegExp('(?:^|\\s)(' + knownGpuLine.source.slice(1, -1) + ')$', 'i');
-const sameModel = (actual, expected) => typeof expected === 'string' && !!expected && gpuKey(actual) === gpuKey(expected);
+const sameModel = (actual, expected) => (Array.isArray(expected) ? expected : [expected])
+  .some(model => typeof model === 'string' && !!model && gpuKey(actual) === gpuKey(model));
 function uniqueModel(models) {
   const unique = new Map(models.map(model => [gpuKey(model), model]));
   return unique.size === 1 ? [...unique.values()][0] : '';

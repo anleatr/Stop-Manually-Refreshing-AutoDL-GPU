@@ -590,11 +590,6 @@ dialog::backdrop { background: rgb(22 44 52 / 34%); backdrop-filter: blur(6px); 
 #task-conflict-dialog .account-actions .button { white-space: normal; }
 
 /* 型号同步：状态说明与按钮同一行，窄屏换行。 */
-.model-sync { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: -6px 0 20px; }
-.model-sync .hint { flex: 1; min-width: 0; margin: 0; }
-.model-sync .hint.error { color: #b45309; }
-.model-sync .button { flex: none; }
-@media (max-width: 640px) { .model-sync { flex-direction: column; } }
 
 /* 任务队列使用页面统一滚动。 */
 .queue-tools { display:flex; flex:none; flex-direction:column; align-items:flex-end; gap:4px; }
@@ -665,3 +660,51 @@ dialog::backdrop { background: rgb(22 44 52 / 34%); backdrop-filter: blur(6px); 
 .task-card[data-active="true"] { box-shadow:inset 3px 0 0 #3aa38c,0 1px 2px rgb(36 52 73 / 4%); }
 .task-card[data-active="true"]:hover { box-shadow:inset 3px 0 0 #3aa38c,0 8px 22px rgb(36 52 73 / 7%); }
 .text-button.danger { color:var(--danger); }
+
+
+.gpu-candidates { min-width: 0; display: grid; gap: 12px; }
+.candidate-header, .candidate-card-header, .candidate-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.candidate-header h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.gpu-candidates .hint { margin: 0; overflow-wrap: anywhere; }
+#gpu-model-hint:empty { display: none; }
+#gpu-model-hint.error { color: #b45309; }
+#gpu-candidate-list { display: grid; gap: 12px; }
+#gpu-candidate-list:empty { display: none; }
+.candidate-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d4e4e0;
+  border-radius: 14px;
+  background: #f5faf8;
+}
+.candidate-card:focus-within { border-color: #93bfb5; }
+.candidate-card-header h4 { margin: 0; color: var(--accent-deep); font-size: 14px; font-weight: 700; }
+.candidate-card .candidate-remove { padding: 2px 0; font-size: 13px; }
+.candidate-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 12px;
+}
+.candidate-fields label { min-width: 0; margin: 0; }
+.candidate-fields :is(select, input) { width: 100%; background-color: var(--panel); }
+.candidate-custom-field { grid-column: 1 / -1; }
+.candidate-footer { justify-content: flex-start; padding-top: 2px; }
+.candidate-footer .button { background: var(--accent-soft); border-color: #cadfd9; color: var(--accent-deep); }
+.candidate-footer .button:hover:not(:disabled) { background: #d9eee7; }
+#clone-fields { margin-top: 18px; }
+@container composer (max-width: 590px) {
+  .candidate-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .candidate-model-field { grid-column: 1 / -1; }
+}
+@container composer (max-width: 350px) {
+  .candidate-fields { grid-template-columns: minmax(0, 1fr); }
+}

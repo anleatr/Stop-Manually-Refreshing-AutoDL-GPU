@@ -101,3 +101,14 @@ test('选中主机后 GPU 数量被平台改掉（如“2卡起租”）：不�
   adapter.radioLabel = () => ({ count: async () => 0, locator: () => ({ isChecked: async () => false, isEnabled: async () => false }) });
   await assert.rejects(() => adapter.checkGpuCountKept(1), error => error.code === 'GPU_COUNT' && error.hostProblem === true);
 });
+
+
+test('切换候选后仍检测先前型号延迟创建的实例', async () => {
+  const earlier = { gpuModel: 'L20', gpuCount: 2, extraDiskGB: 64 };
+  const delayed = { id: 'synthetic-delayed0001', gpuModel: 'L20', gpuCount: 2, region: '北京B区', hostNumber: '924机' };
+  const { adapter, task } = prepareAdapter({ baseline: [delayed] });
+  task.config.candidates = [earlier, { gpuModel: task.config.gpuModel, gpuCount: task.config.gpuCount, extraDiskGB: task.config.extraDiskGB }];
+  task.submitRejections = [{ at: Date.now(), resource: earlier, baselineIds: [] }];
+  probed(adapter, task);
+  await assert.rejects(() => adapter.prepare(task, host, null), error => error.code === 'SUBMIT_LATE');
+});

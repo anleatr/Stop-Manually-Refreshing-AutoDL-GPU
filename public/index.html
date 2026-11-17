@@ -44,19 +44,23 @@
         <section class="panel composer"><div class="panel-heading"><div><h2>建立监测任务</h2><p id="login-link">开始监测前，请先登录。 <button type="button" id="go-account" class="text-button">前往用户配置 →</button></p></div></div>
           <div class="mode-tabs" role="tablist" aria-label="任务模式"><button type="button" class="mode active" data-mode="create" role="tab" aria-selected="true">＋ 新建实例</button><button type="button" class="mode" data-mode="clone" role="tab" aria-selected="false">⇄ 迁移克隆</button></div>
           <form id="task-form">
-            <label>任务名称<input name="name" placeholder="例如：今晚的训练任务" maxlength="80"></label>
-            <label>发现空卡后<select name="action"><option value="execute" selected>自动创建并开机</option><option value="observe">只通知，停在提交之前</option></select></label>
             <div id="live-source-fields" class="hidden"><label>选择源实例<select name="sourceId"><option value="">请先同步 AutoDL 实例</option></select></label></div>
 
             <fieldset class="region-field"><legend id="region-label">监测地区 <small>可多选</small></legend><div id="regions" class="region-options"></div></fieldset>
-            <label><span id="gpu-model-title">GPU 精确型号</span><select name="gpuModel" required aria-describedby="gpu-model-hint"><option value="" disabled selected>请先点“同步 AutoDL 型号”</option><option value="__custom__">其他型号（精确填写）</option></select></label>
-            <label id="custom-gpu-field" class="hidden">其他 GPU 精确型号<input name="customGpuModel" maxlength="80" placeholder="按 AutoDL 完整名称填写，如 A100 80GB" aria-describedby="gpu-model-hint" disabled></label>
-              <p class="hint target-summary">本次目标：<strong id="metric-gpu-model">尚未选择</strong> · <span id="metric-gpu-detail">由你指定</span></p>
-            <div class="model-sync"><p id="gpu-model-hint" class="hint" role="status">型号从 AutoDL 创建页按地区读取。登录后点“同步 AutoDL 型号”。</p><button id="sync-gpus" type="button" class="button small">同步 AutoDL 型号</button></div>
-            <div class="field-grid"><label>GPU 数量<select name="gpuCount"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>10</option><option>12</option></select></label><label>额外扩容数据盘 <span class="unit">GB</span><input name="extraDiskGB" type="number" min="0" max="100000" value="0" required></label></div>
+            <section class="gpu-candidates" aria-labelledby="gpu-candidates-title">
+              <div class="candidate-header"><h3 id="gpu-candidates-title">GPU 候选配置</h3><button id="sync-gpus" type="button" class="button small">同步 AutoDL 型号</button></div>
+              <p id="gpu-model-hint" class="hint" role="status"></p>
+              <section class="candidate-card" aria-labelledby="primary-candidate-title">
+                <div class="candidate-card-header"><h4 id="primary-candidate-title">候选配置 1</h4><button id="remove-primary-candidate" type="button" class="text-button danger candidate-remove hidden" aria-label="移除候选配置 1">移除</button></div>
+                <div class="candidate-fields"><label class="candidate-model-field"><span id="gpu-model-title">GPU 精确型号</span><select name="gpuModel" required aria-describedby="gpu-model-hint"><option value="" disabled selected>请先点“同步 AutoDL 型号”</option><option value="__custom__">其他型号（精确填写）</option></select></label><label>GPU 数量<select name="gpuCount"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>10</option><option>12</option></select></label><label>额外扩容 <span class="unit">GB</span><input name="extraDiskGB" type="number" min="0" max="100000" value="0" required></label><label id="custom-gpu-field" class="candidate-custom-field hidden">其他 GPU 精确型号<input name="customGpuModel" maxlength="80" placeholder="按 AutoDL 完整名称填写，如 A100 80GB" aria-describedby="gpu-model-hint" disabled></label></div>
+              </section>
+              <div id="gpu-candidate-list"></div>
+              <div class="candidate-footer">
+                <button id="add-gpu-candidate" type="button" class="button small">＋ 添加候选配置</button>
+              </div>
+            </section>
             <!-- 环境 CUDA：新建时由下方官方镜像的第四级带入，克隆时随源实例，不需要单独填写。 -->
             <input name="cuda" type="hidden" value="">
-            <p id="cuda-hint" class="hint">新建时 CUDA 随下方选择的官方镜像带入，宿主驱动需支持它；扩容数据盘可能在关机后继续计费。</p>
             <div id="create-fields" class="image-picker">
               <div class="image-picker-heading"><strong>AutoDL 官方基础镜像</strong><button id="sync-images" type="button" class="button small">同步官方镜像</button></div>
               <p id="image-status" class="hint" role="status" aria-live="polite">登录后点击同步，依次选择框架、框架版本、Python 和 CUDA。</p>
@@ -73,6 +77,10 @@
               <button type="submit" id="submit-task" class="button primary wide">创建任务</button>
             </div>
             <details id="advanced-settings" class="advanced-settings"><summary>高级设置</summary><div class="advanced-content">
+              <div class="field-grid">
+                <label>任务名称<input name="name" placeholder="例如：今晚的训练任务" maxlength="80"></label>
+                <label>发现空卡后<select name="action"><option value="execute" selected>自动创建并开机</option><option value="observe">只通知，停在提交之前</option></select></label>
+              </div>
             <div class="form-divider"><span>AutoDL 官方报价</span><small>人民币 · 按量计费</small></div>
             <section id="pricing-card" class="pricing-card" aria-label="当前配置报价">
               <div class="price-values single"><div><span>单卡每小时</span><strong id="price-unit">—</strong></div></div>
@@ -117,5 +125,15 @@
     <div class="account-actions"><button id="conflict-close" type="button" class="button">返回修改配置</button><button id="conflict-view" type="button" class="button">查看原任务与日志</button><button id="continue-task" type="button" class="button primary" hidden>人工确认后继续创建</button><button id="replace-task" type="button" class="button primary" hidden>停止未提交旧任务并按当前配置重建</button></div>
   </dialog>
   <dialog id="logout-dialog" aria-labelledby="logout-title"><h2 id="logout-title">退出本项目的 AutoDL 登录</h2><p>将暂停真实监测任务、关闭专用浏览器并清除其中的登录资料。已创建的云端实例和数据盘会保留，仍可能计费。</p><p class="hint">只清除本项目本机登录，不撤销其他设备会话或平台 Token。恢复任务前需重新登录并核验。</p><label class="check-label"><input id="logout-clear-credentials" type="checkbox">同时清除已保存及本次运行的 余额 Token 和通知凭据</label><div class="account-actions"><button id="logout-cancel" type="button" class="button">取消</button><button id="confirm-logout" type="button" class="button primary">退出并清理本机登录</button></div></dialog>
+<template id="gpu-candidate-template">
+  <section class="candidate-card gpu-candidate">
+    <div class="candidate-card-header"><h4 class="candidate-title">候选配置</h4><button type="button" class="text-button danger candidate-remove">移除</button></div>
+    <div class="candidate-fields">
+      <label class="candidate-model-field">目标 GPU 型号<select class="candidate-model" required></select></label>
+      <label>GPU 数量<select class="candidate-count"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>10</option><option>12</option></select></label><label>额外扩容 <span class="unit">GB</span><input class="candidate-disk" type="number" min="0" max="100000" value="0" required></label>
+      <label class="candidate-custom-field hidden">其他 GPU 精确型号<input class="candidate-custom" maxlength="80" disabled></label>
+    </div>
+  </section>
+</template>
 </body>
 </html>

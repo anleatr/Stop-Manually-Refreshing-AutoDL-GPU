@@ -1,11 +1,12 @@
 import { AppError } from './errors.mjs';
 import { gpuKey } from './matching.mjs';
+import { taskResources } from './config.mjs';
 const FINISHED = new Set(['cancelled', 'expired', 'completed', 'found']);
 export function sameTaskResource(task, config) {
   return task.config.provider === 'autodl' && config.provider === 'autodl'
     && task.config.mode === config.mode
     && (config.mode === 'clone' ? task.config.sourceId === config.sourceId
-      : gpuKey(task.config.gpuModel) === gpuKey(config.gpuModel));
+      : taskResources(task.config).some(a => taskResources(config).some(b => gpuKey(a.gpuModel) === gpuKey(b.gpuModel))));
 }
 export function blocksTask(task, config) {
   // 未核验完成的提交记录即使被停止也保留去重保护。

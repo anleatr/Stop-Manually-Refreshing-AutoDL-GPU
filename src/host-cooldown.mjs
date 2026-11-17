@@ -6,7 +6,8 @@ export const COOLDOWN_BASE_MS = 2 * 60000, COOLDOWN_MAX_MS = 30 * 60000;
 const KEEP_MS = 60 * 60000, LIMIT = 20;
 // 拒绝说明中引号内的平台原文，没有引号时取开头一段。
 const reasonOf = message => (String(message).match(/[“"]([^”"]{2,120})[”"]/)?.[1] || String(message)).slice(0, 120);
-const sameHost = (record, host) => (!!host.id && record.hostId === host.id) || (!!host.number && record.hostNumber === host.number && record.region === host.region);
+const sameHost = (record, host) => (record.resourceIndex == null || record.resourceIndex === host.resourceIndex)
+  && ((!!host.id && record.hostId === host.id) || (!!host.number && record.hostNumber === host.number && record.region === host.region));
 export function activeCooldowns(list = [], now) { return (list || []).filter(record => record.until > now); }
 export function coolHost(list = [], host, message, now) {
   if (!host || (!host.id && !host.number)) return { list: list || [], record: null };
@@ -14,7 +15,7 @@ export function coolHost(list = [], host, message, now) {
   const previous = kept.find(record => sameHost(record, host)), count = (previous?.count || 0) + 1;
   const reason = reasonOf(message), long = HOST_PROBLEM.test(reason);
   const ms = long ? COOLDOWN_MAX_MS : Math.min(COOLDOWN_MAX_MS, COOLDOWN_BASE_MS * 2 ** (count - 1));
-  const record = { hostId: host.id || '', hostNumber: host.number || '', region: host.region || '', at: now, until: now + ms, count, reason };
+  const record = { hostId: host.id || '', hostNumber: host.number || '', region: host.region || '', at: now, until: now + ms, count, reason, ...(host.resourceIndex == null ? {} : { resourceIndex: host.resourceIndex }) };
   return { list: [record, ...kept.filter(item => item !== previous)].slice(0, LIMIT), record };
 }
 export function isCooled(list = [], host, now) { return activeCooldowns(list, now).some(record => sameHost(record, host)); }

@@ -40,7 +40,6 @@ function updateImageForm(){
   }
   // CUDA 不单独显示：新建由第四级镜像带入隐藏字段，克隆随源实例。
   form.elements.cuda.required=create;
-  $('#cuda-hint').textContent=create?'CUDA 随所选镜像确定。':'沿用源实例的 Python、PyTorch 和 CUDA。';
   form.elements.imagePath.required=create;form.elements.imagePath.disabled=!create;
   renderImages();
 }
